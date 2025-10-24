@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'kotlin-kapt'
+}
+
+android {
+    namespace 'cl.powerbox.gateway'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'cl.powerbox.gateway'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug { minifyEnabled false }
+    }
+
+    // AGP 8.x requiere JDK 17
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    packagingOptions {
+        resources {
+            excludes += [ "META-INF/INDEX.LIST", "META-INF/io.netty.versions.properties" ]
+        }
+    }
+}
+
+dependencies {
+    def ktor = "2.3.7"
+    implementation "io.ktor:ktor-server-core:$ktor"
+    implementation "io.ktor:ktor-server-netty:$ktor"
+    implementation "io.ktor:ktor-server-call-logging:$ktor"
+    implementation "io.ktor:ktor-server-content-negotiation:$ktor"
+    implementation "io.ktor:ktor-serialization-jackson:$ktor"
+
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+
+    def room = "2.6.1"
+    implementation "androidx.room:room-ktx:$room"
+    kapt "androidx.room:room-compiler:$room"
+
+    implementation "androidx.work:work-runtime-ktx:2.9.1"
+
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+
+    implementation "androidx.core:core-ktx:1.13.1"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "com.google.android.material:material:1.12.0"
+}
