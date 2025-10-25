@@ -63,7 +63,7 @@ class GatewayForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         val dp = applicationContext.createDeviceProtectedStorageContext()
-        Logger.init(dp)
+        cl.powerbox.gateway.util.Logger.init(dp)
         createChannel()
     }
 

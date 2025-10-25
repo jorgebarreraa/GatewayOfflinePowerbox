@@ -19,8 +19,8 @@ import cl.powerbox.gateway.data.dao.PendingRequestDao;
 import cl.powerbox.gateway.data.dao.PendingRequestDao_Impl;
 import cl.powerbox.gateway.data.dao.ProductDao;
 import cl.powerbox.gateway.data.dao.ProductDao_Impl;
-import cl.powerbox.gateway.data.dao.ReplenishmentDao;
-import cl.powerbox.gateway.data.dao.ReplenishmentDao_Impl;
+import cl.powerbox.gateway.data.dao.ReplenishmentEventDao;
+import cl.powerbox.gateway.data.dao.ReplenishmentEventDao_Impl;
 import cl.powerbox.gateway.data.dao.SaleEventDao;
 import cl.powerbox.gateway.data.dao.SaleEventDao_Impl;
 import cl.powerbox.gateway.data.dao.StockMasterDao;
@@ -52,7 +52,7 @@ public final class AppDatabase_Impl extends AppDatabase {
 
   private volatile SaleEventDao _saleEventDao;
 
-  private volatile ReplenishmentDao _replenishmentDao;
+  private volatile ReplenishmentEventDao _replenishmentEventDao;
 
   private volatile MachineConfigDao _machineConfigDao;
 
@@ -61,29 +61,29 @@ public final class AppDatabase_Impl extends AppDatabase {
   @Override
   @NonNull
   protected SupportSQLiteOpenHelper createOpenHelper(@NonNull final DatabaseConfiguration config) {
-    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(4) {
+    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(1) {
       @Override
       public void createAllTables(@NonNull final SupportSQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `cached_response` (`key` TEXT NOT NULL, `path` TEXT NOT NULL, `method` TEXT NOT NULL, `bodyHash` TEXT NOT NULL, `contentType` TEXT NOT NULL, `bytes` BLOB NOT NULL, `cachedAt` INTEGER NOT NULL, `lastHitAt` INTEGER NOT NULL, PRIMARY KEY(`key`))");
-        db.execSQL("CREATE TABLE IF NOT EXISTS `pending_request` (`id` TEXT NOT NULL, `path` TEXT NOT NULL, `method` TEXT NOT NULL, `headersJson` TEXT NOT NULL, `body` BLOB NOT NULL, `clientOrderId` TEXT, `createdAt` INTEGER NOT NULL, `done` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, `lastError` TEXT, PRIMARY KEY(`id`))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `pending_requests` (`id` TEXT NOT NULL, `path` TEXT NOT NULL, `method` TEXT NOT NULL, `headersJson` TEXT NOT NULL, `body` BLOB NOT NULL, `clientOrderId` TEXT, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `product` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `price` INTEGER NOT NULL, `recipeJson` TEXT, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `stock_master` (`productId` TEXT NOT NULL, `qty` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`productId`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `sale_event` (`id` TEXT NOT NULL, `serverOrderId` TEXT, `clientOrderId` TEXT, `productId` TEXT NOT NULL, `qty` INTEGER NOT NULL, `price` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `sent` INTEGER NOT NULL, PRIMARY KEY(`id`))");
-        db.execSQL("CREATE TABLE IF NOT EXISTS `replenishment_event` (`id` TEXT NOT NULL, `productId` TEXT NOT NULL, `deltaQty` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `sent` INTEGER NOT NULL, PRIMARY KEY(`id`))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `replenishment_events` (`id` TEXT NOT NULL, `productId` TEXT NOT NULL, `deltaQty` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `sent` INTEGER NOT NULL, PRIMARY KEY(`id`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS `machine_config` (`key` TEXT NOT NULL, `value` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`key`))");
-        db.execSQL("CREATE TABLE IF NOT EXISTS `stock_state` (`productId` TEXT NOT NULL, `serverQty` INTEGER NOT NULL, `localDelta` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`productId`))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `stock_state` (`productId` TEXT NOT NULL, `serverQty` INTEGER NOT NULL, `localDelta` INTEGER NOT NULL, `lastSync` INTEGER NOT NULL, PRIMARY KEY(`productId`))");
         db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)");
-        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0b7d09ecc64004d8a8c2e80c4f3c210f')");
+        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'aaac7b5cc665bab77a1ba137f4ebdd96')");
       }
 
       @Override
       public void dropAllTables(@NonNull final SupportSQLiteDatabase db) {
         db.execSQL("DROP TABLE IF EXISTS `cached_response`");
-        db.execSQL("DROP TABLE IF EXISTS `pending_request`");
+        db.execSQL("DROP TABLE IF EXISTS `pending_requests`");
         db.execSQL("DROP TABLE IF EXISTS `product`");
         db.execSQL("DROP TABLE IF EXISTS `stock_master`");
         db.execSQL("DROP TABLE IF EXISTS `sale_event`");
-        db.execSQL("DROP TABLE IF EXISTS `replenishment_event`");
+        db.execSQL("DROP TABLE IF EXISTS `replenishment_events`");
         db.execSQL("DROP TABLE IF EXISTS `machine_config`");
         db.execSQL("DROP TABLE IF EXISTS `stock_state`");
         final List<? extends RoomDatabase.Callback> _callbacks = mCallbacks;
@@ -147,25 +147,22 @@ public final class AppDatabase_Impl extends AppDatabase {
                   + " Expected:\n" + _infoCachedResponse + "\n"
                   + " Found:\n" + _existingCachedResponse);
         }
-        final HashMap<String, TableInfo.Column> _columnsPendingRequest = new HashMap<String, TableInfo.Column>(10);
-        _columnsPendingRequest.put("id", new TableInfo.Column("id", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("path", new TableInfo.Column("path", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("method", new TableInfo.Column("method", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("headersJson", new TableInfo.Column("headersJson", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("body", new TableInfo.Column("body", "BLOB", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("clientOrderId", new TableInfo.Column("clientOrderId", "TEXT", false, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("createdAt", new TableInfo.Column("createdAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("done", new TableInfo.Column("done", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("attempts", new TableInfo.Column("attempts", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsPendingRequest.put("lastError", new TableInfo.Column("lastError", "TEXT", false, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        final HashSet<TableInfo.ForeignKey> _foreignKeysPendingRequest = new HashSet<TableInfo.ForeignKey>(0);
-        final HashSet<TableInfo.Index> _indicesPendingRequest = new HashSet<TableInfo.Index>(0);
-        final TableInfo _infoPendingRequest = new TableInfo("pending_request", _columnsPendingRequest, _foreignKeysPendingRequest, _indicesPendingRequest);
-        final TableInfo _existingPendingRequest = TableInfo.read(db, "pending_request");
-        if (!_infoPendingRequest.equals(_existingPendingRequest)) {
-          return new RoomOpenHelper.ValidationResult(false, "pending_request(cl.powerbox.gateway.data.entity.PendingRequest).\n"
-                  + " Expected:\n" + _infoPendingRequest + "\n"
-                  + " Found:\n" + _existingPendingRequest);
+        final HashMap<String, TableInfo.Column> _columnsPendingRequests = new HashMap<String, TableInfo.Column>(7);
+        _columnsPendingRequests.put("id", new TableInfo.Column("id", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPendingRequests.put("path", new TableInfo.Column("path", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPendingRequests.put("method", new TableInfo.Column("method", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPendingRequests.put("headersJson", new TableInfo.Column("headersJson", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPendingRequests.put("body", new TableInfo.Column("body", "BLOB", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPendingRequests.put("clientOrderId", new TableInfo.Column("clientOrderId", "TEXT", false, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPendingRequests.put("createdAt", new TableInfo.Column("createdAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        final HashSet<TableInfo.ForeignKey> _foreignKeysPendingRequests = new HashSet<TableInfo.ForeignKey>(0);
+        final HashSet<TableInfo.Index> _indicesPendingRequests = new HashSet<TableInfo.Index>(0);
+        final TableInfo _infoPendingRequests = new TableInfo("pending_requests", _columnsPendingRequests, _foreignKeysPendingRequests, _indicesPendingRequests);
+        final TableInfo _existingPendingRequests = TableInfo.read(db, "pending_requests");
+        if (!_infoPendingRequests.equals(_existingPendingRequests)) {
+          return new RoomOpenHelper.ValidationResult(false, "pending_requests(cl.powerbox.gateway.data.entity.PendingRequest).\n"
+                  + " Expected:\n" + _infoPendingRequests + "\n"
+                  + " Found:\n" + _existingPendingRequests);
         }
         final HashMap<String, TableInfo.Column> _columnsProduct = new HashMap<String, TableInfo.Column>(5);
         _columnsProduct.put("id", new TableInfo.Column("id", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
@@ -213,20 +210,20 @@ public final class AppDatabase_Impl extends AppDatabase {
                   + " Expected:\n" + _infoSaleEvent + "\n"
                   + " Found:\n" + _existingSaleEvent);
         }
-        final HashMap<String, TableInfo.Column> _columnsReplenishmentEvent = new HashMap<String, TableInfo.Column>(5);
-        _columnsReplenishmentEvent.put("id", new TableInfo.Column("id", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsReplenishmentEvent.put("productId", new TableInfo.Column("productId", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsReplenishmentEvent.put("deltaQty", new TableInfo.Column("deltaQty", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsReplenishmentEvent.put("createdAt", new TableInfo.Column("createdAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsReplenishmentEvent.put("sent", new TableInfo.Column("sent", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        final HashSet<TableInfo.ForeignKey> _foreignKeysReplenishmentEvent = new HashSet<TableInfo.ForeignKey>(0);
-        final HashSet<TableInfo.Index> _indicesReplenishmentEvent = new HashSet<TableInfo.Index>(0);
-        final TableInfo _infoReplenishmentEvent = new TableInfo("replenishment_event", _columnsReplenishmentEvent, _foreignKeysReplenishmentEvent, _indicesReplenishmentEvent);
-        final TableInfo _existingReplenishmentEvent = TableInfo.read(db, "replenishment_event");
-        if (!_infoReplenishmentEvent.equals(_existingReplenishmentEvent)) {
-          return new RoomOpenHelper.ValidationResult(false, "replenishment_event(cl.powerbox.gateway.data.entity.ReplenishmentEvent).\n"
-                  + " Expected:\n" + _infoReplenishmentEvent + "\n"
-                  + " Found:\n" + _existingReplenishmentEvent);
+        final HashMap<String, TableInfo.Column> _columnsReplenishmentEvents = new HashMap<String, TableInfo.Column>(5);
+        _columnsReplenishmentEvents.put("id", new TableInfo.Column("id", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsReplenishmentEvents.put("productId", new TableInfo.Column("productId", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsReplenishmentEvents.put("deltaQty", new TableInfo.Column("deltaQty", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsReplenishmentEvents.put("createdAt", new TableInfo.Column("createdAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsReplenishmentEvents.put("sent", new TableInfo.Column("sent", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        final HashSet<TableInfo.ForeignKey> _foreignKeysReplenishmentEvents = new HashSet<TableInfo.ForeignKey>(0);
+        final HashSet<TableInfo.Index> _indicesReplenishmentEvents = new HashSet<TableInfo.Index>(0);
+        final TableInfo _infoReplenishmentEvents = new TableInfo("replenishment_events", _columnsReplenishmentEvents, _foreignKeysReplenishmentEvents, _indicesReplenishmentEvents);
+        final TableInfo _existingReplenishmentEvents = TableInfo.read(db, "replenishment_events");
+        if (!_infoReplenishmentEvents.equals(_existingReplenishmentEvents)) {
+          return new RoomOpenHelper.ValidationResult(false, "replenishment_events(cl.powerbox.gateway.data.entity.ReplenishmentEvent).\n"
+                  + " Expected:\n" + _infoReplenishmentEvents + "\n"
+                  + " Found:\n" + _existingReplenishmentEvents);
         }
         final HashMap<String, TableInfo.Column> _columnsMachineConfig = new HashMap<String, TableInfo.Column>(3);
         _columnsMachineConfig.put("key", new TableInfo.Column("key", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
@@ -245,7 +242,7 @@ public final class AppDatabase_Impl extends AppDatabase {
         _columnsStockState.put("productId", new TableInfo.Column("productId", "TEXT", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
         _columnsStockState.put("serverQty", new TableInfo.Column("serverQty", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
         _columnsStockState.put("localDelta", new TableInfo.Column("localDelta", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
-        _columnsStockState.put("updatedAt", new TableInfo.Column("updatedAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsStockState.put("lastSync", new TableInfo.Column("lastSync", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
         final HashSet<TableInfo.ForeignKey> _foreignKeysStockState = new HashSet<TableInfo.ForeignKey>(0);
         final HashSet<TableInfo.Index> _indicesStockState = new HashSet<TableInfo.Index>(0);
         final TableInfo _infoStockState = new TableInfo("stock_state", _columnsStockState, _foreignKeysStockState, _indicesStockState);
@@ -257,7 +254,7 @@ public final class AppDatabase_Impl extends AppDatabase {
         }
         return new RoomOpenHelper.ValidationResult(true, null);
       }
-    }, "0b7d09ecc64004d8a8c2e80c4f3c210f", "f048890a7e00b7205fa925cc391064f0");
+    }, "aaac7b5cc665bab77a1ba137f4ebdd96", "e398eb57a96abe7227418c0b3e3e1ae6");
     final SupportSQLiteOpenHelper.Configuration _sqliteConfig = SupportSQLiteOpenHelper.Configuration.builder(config.context).name(config.name).callback(_openCallback).build();
     final SupportSQLiteOpenHelper _helper = config.sqliteOpenHelperFactory.create(_sqliteConfig);
     return _helper;
@@ -268,7 +265,7 @@ public final class AppDatabase_Impl extends AppDatabase {
   protected InvalidationTracker createInvalidationTracker() {
     final HashMap<String, String> _shadowTablesMap = new HashMap<String, String>(0);
     final HashMap<String, Set<String>> _viewTables = new HashMap<String, Set<String>>(0);
-    return new InvalidationTracker(this, _shadowTablesMap, _viewTables, "cached_response","pending_request","product","stock_master","sale_event","replenishment_event","machine_config","stock_state");
+    return new InvalidationTracker(this, _shadowTablesMap, _viewTables, "cached_response","pending_requests","product","stock_master","sale_event","replenishment_events","machine_config","stock_state");
   }
 
   @Override
@@ -278,11 +275,11 @@ public final class AppDatabase_Impl extends AppDatabase {
     try {
       super.beginTransaction();
       _db.execSQL("DELETE FROM `cached_response`");
-      _db.execSQL("DELETE FROM `pending_request`");
+      _db.execSQL("DELETE FROM `pending_requests`");
       _db.execSQL("DELETE FROM `product`");
       _db.execSQL("DELETE FROM `stock_master`");
       _db.execSQL("DELETE FROM `sale_event`");
-      _db.execSQL("DELETE FROM `replenishment_event`");
+      _db.execSQL("DELETE FROM `replenishment_events`");
       _db.execSQL("DELETE FROM `machine_config`");
       _db.execSQL("DELETE FROM `stock_state`");
       super.setTransactionSuccessful();
@@ -304,7 +301,7 @@ public final class AppDatabase_Impl extends AppDatabase {
     _typeConvertersMap.put(ProductDao.class, ProductDao_Impl.getRequiredConverters());
     _typeConvertersMap.put(StockMasterDao.class, StockMasterDao_Impl.getRequiredConverters());
     _typeConvertersMap.put(SaleEventDao.class, SaleEventDao_Impl.getRequiredConverters());
-    _typeConvertersMap.put(ReplenishmentDao.class, ReplenishmentDao_Impl.getRequiredConverters());
+    _typeConvertersMap.put(ReplenishmentEventDao.class, ReplenishmentEventDao_Impl.getRequiredConverters());
     _typeConvertersMap.put(MachineConfigDao.class, MachineConfigDao_Impl.getRequiredConverters());
     _typeConvertersMap.put(StockStateDao.class, StockStateDao_Impl.getRequiredConverters());
     return _typeConvertersMap;
@@ -396,15 +393,15 @@ public final class AppDatabase_Impl extends AppDatabase {
   }
 
   @Override
-  public ReplenishmentDao replenishmentDao() {
-    if (_replenishmentDao != null) {
-      return _replenishmentDao;
+  public ReplenishmentEventDao replenishmentDao() {
+    if (_replenishmentEventDao != null) {
+      return _replenishmentEventDao;
     } else {
       synchronized(this) {
-        if(_replenishmentDao == null) {
-          _replenishmentDao = new ReplenishmentDao_Impl(this);
+        if(_replenishmentEventDao == null) {
+          _replenishmentEventDao = new ReplenishmentEventDao_Impl(this);
         }
-        return _replenishmentDao;
+        return _replenishmentEventDao;
       }
     }
   }

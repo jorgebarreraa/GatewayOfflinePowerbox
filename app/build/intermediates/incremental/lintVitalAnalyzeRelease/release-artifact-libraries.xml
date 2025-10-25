@@ -465,6 +465,26 @@
       jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlin\kotlin-stdlib-jdk8\1.9.10\c7510d64a83411a649c76f2778304ddf71d7437b\kotlin-stdlib-jdk8-1.9.10.jar"
       resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.10"/>
   <library
+      name="com.fasterxml.jackson.core:jackson-databind:2.15.3@jar"
+      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.core\jackson-databind\2.15.3\a734bc2c47a9453c4efa772461a3aeb273c010d9\jackson-databind-2.15.3.jar"
+      resolved="com.fasterxml.jackson.core:jackson-databind:2.15.3"/>
+  <library
+      name="com.fasterxml.jackson.core:jackson-annotations:2.15.3@jar"
+      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.core\jackson-annotations\2.15.3\79baf4e605eb3bbb60b1c475d44a7aecceea1d60\jackson-annotations-2.15.3.jar"
+      resolved="com.fasterxml.jackson.core:jackson-annotations:2.15.3"/>
+  <library
+      name="com.fasterxml.jackson.core:jackson-core:2.15.3@jar"
+      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.core\jackson-core\2.15.3\60d600567c1862840397bf9ff5a92398edc5797b\jackson-core-2.15.3.jar"
+      resolved="com.fasterxml.jackson.core:jackson-core:2.15.3"/>
+  <library
+      name="com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3@jar"
+      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.module\jackson-module-kotlin\2.15.3\36ea7813ada694e67f562ff1dc6f3b47883e373\jackson-module-kotlin-2.15.3.jar"
+      resolved="com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3"/>
+  <library
+      name="org.jetbrains.kotlin:kotlin-reflect:1.8.22@jar"
+      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlin\kotlin-reflect\1.8.22\b52be44bc57cb6fd2169a29aefa4507c4e49c858\kotlin-reflect-1.8.22.jar"
+      resolved="org.jetbrains.kotlin:kotlin-reflect:1.8.22"/>
+  <library
       name="androidx.savedstate:savedstate:1.2.1@aar"
       jars="C:\Users\lolop\.gradle\caches\transforms-4\e49eff76b8b23df891d8a77f6ab789c0\transformed\jetified-savedstate-1.2.1\jars\classes.jar"
       resolved="androidx.savedstate:savedstate:1.2.1"
@@ -494,26 +514,6 @@
       name="org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.10@jar"
       jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlin\kotlin-stdlib-jdk7\1.9.10\bc5bfc2690338defd5195b05c57562f2194eeb10\kotlin-stdlib-jdk7-1.9.10.jar"
       resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.10"/>
-  <library
-      name="com.fasterxml.jackson.core:jackson-databind:2.15.3@jar"
-      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.core\jackson-databind\2.15.3\a734bc2c47a9453c4efa772461a3aeb273c010d9\jackson-databind-2.15.3.jar"
-      resolved="com.fasterxml.jackson.core:jackson-databind:2.15.3"/>
-  <library
-      name="com.fasterxml.jackson.core:jackson-annotations:2.15.3@jar"
-      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.core\jackson-annotations\2.15.3\79baf4e605eb3bbb60b1c475d44a7aecceea1d60\jackson-annotations-2.15.3.jar"
-      resolved="com.fasterxml.jackson.core:jackson-annotations:2.15.3"/>
-  <library
-      name="com.fasterxml.jackson.core:jackson-core:2.15.3@jar"
-      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.core\jackson-core\2.15.3\60d600567c1862840397bf9ff5a92398edc5797b\jackson-core-2.15.3.jar"
-      resolved="com.fasterxml.jackson.core:jackson-core:2.15.3"/>
-  <library
-      name="com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3@jar"
-      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\com.fasterxml.jackson.module\jackson-module-kotlin\2.15.3\36ea7813ada694e67f562ff1dc6f3b47883e373\jackson-module-kotlin-2.15.3.jar"
-      resolved="com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3"/>
-  <library
-      name="org.jetbrains.kotlin:kotlin-reflect:1.8.22@jar"
-      jars="C:\Users\lolop\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlin\kotlin-reflect\1.8.22\b52be44bc57cb6fd2169a29aefa4507c4e49c858\kotlin-reflect-1.8.22.jar"
-      resolved="org.jetbrains.kotlin:kotlin-reflect:1.8.22"/>
   <library
       name="androidx.cursoradapter:cursoradapter:1.0.0@aar"
       jars="C:\Users\lolop\.gradle\caches\transforms-4\7cefb98840f80640cd6e7c9f4d65f1cc\transformed\cursoradapter-1.0.0\jars\classes.jar"

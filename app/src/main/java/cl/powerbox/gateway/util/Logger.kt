@@ -1,41 +1,41 @@
 package cl.powerbox.gateway.util
 
+import android.content.Context
 import android.util.Log
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object Logger {
-    
-    private const val TAG = "Gateway"
-    private var enabled = true
+    private const val TAG = "GatewayOffline"
 
-    fun d(message: String) {
-        if (enabled) {
-            Log.d(TAG, message)
-        }
+    @Volatile
+    private var file: File? = null
+
+    private val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    fun init(ctx: Context) {
+        if (file != null) return
+        val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+        file = File(dir, "gateway.log")
+        write("-- LOGGER INIT --")
     }
 
-    fun i(message: String) {
-        if (enabled) {
-            Log.i(TAG, message)
-        }
+    fun d(msg: String) {
+        Log.d(TAG, msg)
+        write(msg)
     }
 
-    fun w(message: String) {
-        if (enabled) {
-            Log.w(TAG, message)
-        }
+    fun e(msg: String, t: Throwable? = null) {
+        Log.e(TAG, msg, t)
+        write("$msg ${t?.let { "\n" + Log.getStackTraceString(it) } ?: ""}")
     }
 
-    fun e(message: String, throwable: Throwable? = null) {
-        if (enabled) {
-            if (throwable != null) {
-                Log.e(TAG, message, throwable)
-            } else {
-                Log.e(TAG, message)
-            }
-        }
-    }
-
-    fun setEnabled(enabled: Boolean) {
-        Logger.enabled = enabled
+    private fun write(text: String) {
+        try {
+            val f = file ?: return
+            f.appendText("${sdf.format(Date())}  $text\n")
+        } catch (_: Throwable) { }
     }
 }

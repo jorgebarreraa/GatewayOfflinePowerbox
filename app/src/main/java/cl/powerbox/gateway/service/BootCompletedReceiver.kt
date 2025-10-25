@@ -6,15 +6,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import cl.powerbox.gateway.util.Logger
 
 class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val a = intent.action ?: return
         val dpCtx = context.applicationContext.createDeviceProtectedStorageContext()
 
-        Logger.init(dpCtx)
-        Logger.d("BootReceiver action=$a")
+        cl.powerbox.gateway.util.Logger.init(dpCtx)
+        cl.powerbox.gateway.util.Logger.d("BootReceiver action=$a")
 
         val actions = setOf(
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
@@ -25,15 +24,13 @@ class BootCompletedReceiver : BroadcastReceiver() {
         )
         if (a !in actions) return
 
-        // Arranque inmediato
         try {
             GatewayForegroundService.start(dpCtx)
-            Logger.d("BootReceiver -> startForegroundService OK")
+            cl.powerbox.gateway.util.Logger.d("BootReceiver -> startForegroundService OK")
         } catch (t: Throwable) {
-            Logger.e("BootReceiver start failed", t)
+            cl.powerbox.gateway.util.Logger.e("BootReceiver start failed", t)
         }
 
-        // Fallback +2s
         try {
             val am = dpCtx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val pi = PendingIntent.getService(
@@ -46,9 +43,9 @@ class BootCompletedReceiver : BroadcastReceiver() {
                 SystemClock.elapsedRealtime() + 2000L,
                 pi
             )
-            Logger.d("BootReceiver -> Alarm fallback (+2s)")
+            cl.powerbox.gateway.util.Logger.d("BootReceiver -> Alarm fallback (+2s)")
         } catch (t: Throwable) {
-            Logger.e("BootReceiver alarm failed", t)
+            cl.powerbox.gateway.util.Logger.e("BootReceiver alarm failed", t)
         }
     }
 }

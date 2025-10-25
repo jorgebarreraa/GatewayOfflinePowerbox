@@ -67,6 +67,7 @@ class SyncWorker(
 
         for (req in pending) {
             try {
+                @Suppress("UNCHECKED_CAST")
                 val headersMap = try {
                     mapper.readValue(req.headersJson, Map::class.java) as Map<String, String>
                 } catch (_: Throwable) {
@@ -172,7 +173,7 @@ class SyncWorker(
     private suspend fun cleanupSyncedStockStates() {
         withContext(Dispatchers.IO) {
             val allSentEvents = db.replenishmentDao().allSent()
-            
+
             if (allSentEvents.isEmpty()) return@withContext
 
             val syncedDeltas = allSentEvents

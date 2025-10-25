@@ -28,7 +28,9 @@ public final class StockStateDao_Impl implements StockStateDao {
 
   private final SharedSQLiteStatement __preparedStmtOfUpdateServerQty;
 
-  private final SharedSQLiteStatement __preparedStmtOfApplyDelta;
+  private final SharedSQLiteStatement __preparedStmtOfResetLocalDelta;
+
+  private final SharedSQLiteStatement __preparedStmtOfDeleteById;
 
   public StockStateDao_Impl(@NonNull final RoomDatabase __db) {
     this.__db = __db;
@@ -36,7 +38,7 @@ public final class StockStateDao_Impl implements StockStateDao {
       @Override
       @NonNull
       protected String createQuery() {
-        return "INSERT OR REPLACE INTO `stock_state` (`productId`,`serverQty`,`localDelta`,`updatedAt`) VALUES (?,?,?,?)";
+        return "INSERT OR REPLACE INTO `stock_state` (`productId`,`serverQty`,`localDelta`,`lastSync`) VALUES (?,?,?,?)";
       }
 
       @Override
@@ -49,22 +51,30 @@ public final class StockStateDao_Impl implements StockStateDao {
         }
         statement.bindLong(2, entity.getServerQty());
         statement.bindLong(3, entity.getLocalDelta());
-        statement.bindLong(4, entity.getUpdatedAt());
+        statement.bindLong(4, entity.getLastSync());
       }
     };
     this.__preparedStmtOfUpdateServerQty = new SharedSQLiteStatement(__db) {
       @Override
       @NonNull
       public String createQuery() {
-        final String _query = "UPDATE stock_state SET serverQty = ?, updatedAt = ? WHERE productId = ?";
+        final String _query = "UPDATE stock_state SET serverQty = ? WHERE productId = ?";
         return _query;
       }
     };
-    this.__preparedStmtOfApplyDelta = new SharedSQLiteStatement(__db) {
+    this.__preparedStmtOfResetLocalDelta = new SharedSQLiteStatement(__db) {
       @Override
       @NonNull
       public String createQuery() {
-        final String _query = "UPDATE stock_state SET localDelta = localDelta + ?, updatedAt = ? WHERE productId = ?";
+        final String _query = "UPDATE stock_state SET localDelta = 0 WHERE productId = ?";
+        return _query;
+      }
+    };
+    this.__preparedStmtOfDeleteById = new SharedSQLiteStatement(__db) {
+      @Override
+      @NonNull
+      public String createQuery() {
+        final String _query = "DELETE FROM stock_state WHERE productId = ?";
         return _query;
       }
     };
@@ -83,10 +93,10 @@ public final class StockStateDao_Impl implements StockStateDao {
   }
 
   @Override
-  public void ensureAndDelta(final String pid, final int delta, final long now) {
+  public void ensureAndDelta(final String productId, final int delta, final long timestamp) {
     __db.beginTransaction();
     try {
-      StockStateDao.DefaultImpls.ensureAndDelta(StockStateDao_Impl.this, pid, delta, now);
+      StockStateDao.DefaultImpls.ensureAndDelta(StockStateDao_Impl.this, productId, delta, timestamp);
       __db.setTransactionSuccessful();
     } finally {
       __db.endTransaction();
@@ -94,29 +104,16 @@ public final class StockStateDao_Impl implements StockStateDao {
   }
 
   @Override
-  public void ensureAndSetServer(final String pid, final int serverQty, final long now) {
-    __db.beginTransaction();
-    try {
-      StockStateDao.DefaultImpls.ensureAndSetServer(StockStateDao_Impl.this, pid, serverQty, now);
-      __db.setTransactionSuccessful();
-    } finally {
-      __db.endTransaction();
-    }
-  }
-
-  @Override
-  public void updateServerQty(final String pid, final int serverQty, final long ts) {
+  public void updateServerQty(final String id, final int qty) {
     __db.assertNotSuspendingTransaction();
     final SupportSQLiteStatement _stmt = __preparedStmtOfUpdateServerQty.acquire();
     int _argIndex = 1;
-    _stmt.bindLong(_argIndex, serverQty);
+    _stmt.bindLong(_argIndex, qty);
     _argIndex = 2;
-    _stmt.bindLong(_argIndex, ts);
-    _argIndex = 3;
-    if (pid == null) {
+    if (id == null) {
       _stmt.bindNull(_argIndex);
     } else {
-      _stmt.bindString(_argIndex, pid);
+      _stmt.bindString(_argIndex, id);
     }
     try {
       __db.beginTransaction();
@@ -132,18 +129,14 @@ public final class StockStateDao_Impl implements StockStateDao {
   }
 
   @Override
-  public void applyDelta(final String pid, final int delta, final long ts) {
+  public void resetLocalDelta(final String id) {
     __db.assertNotSuspendingTransaction();
-    final SupportSQLiteStatement _stmt = __preparedStmtOfApplyDelta.acquire();
+    final SupportSQLiteStatement _stmt = __preparedStmtOfResetLocalDelta.acquire();
     int _argIndex = 1;
-    _stmt.bindLong(_argIndex, delta);
-    _argIndex = 2;
-    _stmt.bindLong(_argIndex, ts);
-    _argIndex = 3;
-    if (pid == null) {
+    if (id == null) {
       _stmt.bindNull(_argIndex);
     } else {
-      _stmt.bindString(_argIndex, pid);
+      _stmt.bindString(_argIndex, id);
     }
     try {
       __db.beginTransaction();
@@ -154,49 +147,30 @@ public final class StockStateDao_Impl implements StockStateDao {
         __db.endTransaction();
       }
     } finally {
-      __preparedStmtOfApplyDelta.release(_stmt);
+      __preparedStmtOfResetLocalDelta.release(_stmt);
     }
   }
 
   @Override
-  public StockState byId(final String pid) {
-    final String _sql = "SELECT * FROM stock_state WHERE productId = ?";
-    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 1);
-    int _argIndex = 1;
-    if (pid == null) {
-      _statement.bindNull(_argIndex);
-    } else {
-      _statement.bindString(_argIndex, pid);
-    }
+  public void deleteById(final String id) {
     __db.assertNotSuspendingTransaction();
-    final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+    final SupportSQLiteStatement _stmt = __preparedStmtOfDeleteById.acquire();
+    int _argIndex = 1;
+    if (id == null) {
+      _stmt.bindNull(_argIndex);
+    } else {
+      _stmt.bindString(_argIndex, id);
+    }
     try {
-      final int _cursorIndexOfProductId = CursorUtil.getColumnIndexOrThrow(_cursor, "productId");
-      final int _cursorIndexOfServerQty = CursorUtil.getColumnIndexOrThrow(_cursor, "serverQty");
-      final int _cursorIndexOfLocalDelta = CursorUtil.getColumnIndexOrThrow(_cursor, "localDelta");
-      final int _cursorIndexOfUpdatedAt = CursorUtil.getColumnIndexOrThrow(_cursor, "updatedAt");
-      final StockState _result;
-      if (_cursor.moveToFirst()) {
-        final String _tmpProductId;
-        if (_cursor.isNull(_cursorIndexOfProductId)) {
-          _tmpProductId = null;
-        } else {
-          _tmpProductId = _cursor.getString(_cursorIndexOfProductId);
-        }
-        final int _tmpServerQty;
-        _tmpServerQty = _cursor.getInt(_cursorIndexOfServerQty);
-        final int _tmpLocalDelta;
-        _tmpLocalDelta = _cursor.getInt(_cursorIndexOfLocalDelta);
-        final long _tmpUpdatedAt;
-        _tmpUpdatedAt = _cursor.getLong(_cursorIndexOfUpdatedAt);
-        _result = new StockState(_tmpProductId,_tmpServerQty,_tmpLocalDelta,_tmpUpdatedAt);
-      } else {
-        _result = null;
+      __db.beginTransaction();
+      try {
+        _stmt.executeUpdateDelete();
+        __db.setTransactionSuccessful();
+      } finally {
+        __db.endTransaction();
       }
-      return _result;
     } finally {
-      _cursor.close();
-      _statement.release();
+      __preparedStmtOfDeleteById.release(_stmt);
     }
   }
 
@@ -210,7 +184,7 @@ public final class StockStateDao_Impl implements StockStateDao {
       final int _cursorIndexOfProductId = CursorUtil.getColumnIndexOrThrow(_cursor, "productId");
       final int _cursorIndexOfServerQty = CursorUtil.getColumnIndexOrThrow(_cursor, "serverQty");
       final int _cursorIndexOfLocalDelta = CursorUtil.getColumnIndexOrThrow(_cursor, "localDelta");
-      final int _cursorIndexOfUpdatedAt = CursorUtil.getColumnIndexOrThrow(_cursor, "updatedAt");
+      final int _cursorIndexOfLastSync = CursorUtil.getColumnIndexOrThrow(_cursor, "lastSync");
       final List<StockState> _result = new ArrayList<StockState>(_cursor.getCount());
       while (_cursor.moveToNext()) {
         final StockState _item;
@@ -224,10 +198,52 @@ public final class StockStateDao_Impl implements StockStateDao {
         _tmpServerQty = _cursor.getInt(_cursorIndexOfServerQty);
         final int _tmpLocalDelta;
         _tmpLocalDelta = _cursor.getInt(_cursorIndexOfLocalDelta);
-        final long _tmpUpdatedAt;
-        _tmpUpdatedAt = _cursor.getLong(_cursorIndexOfUpdatedAt);
-        _item = new StockState(_tmpProductId,_tmpServerQty,_tmpLocalDelta,_tmpUpdatedAt);
+        final long _tmpLastSync;
+        _tmpLastSync = _cursor.getLong(_cursorIndexOfLastSync);
+        _item = new StockState(_tmpProductId,_tmpServerQty,_tmpLocalDelta,_tmpLastSync);
         _result.add(_item);
+      }
+      return _result;
+    } finally {
+      _cursor.close();
+      _statement.release();
+    }
+  }
+
+  @Override
+  public StockState byId(final String id) {
+    final String _sql = "SELECT * FROM stock_state WHERE productId = ? LIMIT 1";
+    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 1);
+    int _argIndex = 1;
+    if (id == null) {
+      _statement.bindNull(_argIndex);
+    } else {
+      _statement.bindString(_argIndex, id);
+    }
+    __db.assertNotSuspendingTransaction();
+    final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+    try {
+      final int _cursorIndexOfProductId = CursorUtil.getColumnIndexOrThrow(_cursor, "productId");
+      final int _cursorIndexOfServerQty = CursorUtil.getColumnIndexOrThrow(_cursor, "serverQty");
+      final int _cursorIndexOfLocalDelta = CursorUtil.getColumnIndexOrThrow(_cursor, "localDelta");
+      final int _cursorIndexOfLastSync = CursorUtil.getColumnIndexOrThrow(_cursor, "lastSync");
+      final StockState _result;
+      if (_cursor.moveToFirst()) {
+        final String _tmpProductId;
+        if (_cursor.isNull(_cursorIndexOfProductId)) {
+          _tmpProductId = null;
+        } else {
+          _tmpProductId = _cursor.getString(_cursorIndexOfProductId);
+        }
+        final int _tmpServerQty;
+        _tmpServerQty = _cursor.getInt(_cursorIndexOfServerQty);
+        final int _tmpLocalDelta;
+        _tmpLocalDelta = _cursor.getInt(_cursorIndexOfLocalDelta);
+        final long _tmpLastSync;
+        _tmpLastSync = _cursor.getLong(_cursorIndexOfLastSync);
+        _result = new StockState(_tmpProductId,_tmpServerQty,_tmpLocalDelta,_tmpLastSync);
+      } else {
+        _result = null;
       }
       return _result;
     } finally {
