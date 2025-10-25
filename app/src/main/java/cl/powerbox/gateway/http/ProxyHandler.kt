@@ -29,22 +29,17 @@ class ProxyHandler(private val ctx: Context) {
 
     private val REAL_BASE = "https://gsvden.coffeeji.com"
 
-    // Endpoints donde aplicamos overlay de stock con localDelta
-    private fun isStockListEndpoint(path: String): Boolean {
-        return path.contains("coffee/api/device/listTypeAllMaterial") ||
+    private fun isStockListEndpoint(path: String): Boolean =
+        path.contains("coffee/api/device/listTypeAllMaterial") ||
                 path.contains("coffee/api/device/replenishList") ||
                 path.contains("coffee/api/device/deviceAllInfo") ||
                 path.contains("coffee/api/goods/withoutPage")
-    }
 
-    // Endpoints de orden críticos que deben responder offline
-    private fun isCriticalOrderEndpoint(path: String): Boolean {
-        return path.contains("coffee/api/order/genOrder") ||
+    private fun isCriticalOrderEndpoint(path: String): Boolean =
+        path.contains("coffee/api/order/genOrder") ||
                 path.contains("coffee/api/order/outStockOver") ||
                 path.contains("coffee/api/order/produceOver")
-    }
 
-    // Reposición
     private fun isReplenishPost(path: String): Boolean {
         val p = path.lowercase()
         return p.contains("replenishsubmit") ||
@@ -76,65 +71,83 @@ class ProxyHandler(private val ctx: Context) {
         Logger.d("Proxy.handle online=$online method=$upper path=$path body=${body?.size ?: 0}B")
 
         return if (online) {
-            try {
-                val allowsBody = upper in listOf("POST", "PUT", "PATCH", "DELETE")
-                val reqBody: RequestBody? = if (allowsBody) (body ?: ByteArray(0)).toRequestBody(null) else null
-
-                // POST de reposición: mandamos online y aplicamos local si 2xx
-                if (upper == "POST" && isReplenishPost(path)) {
-                    val okResp = tryForwardAndReturn(upper, path, headers, reqBody)
-                    if (okResp.code in 200..299) {
-                        applyReplenishmentLocally(path, body ?: ByteArray(0))
-                    }
-                    val bytes = okResp.body?.bytes() ?: """{"success":true}""".toByteArray()
-                    val ct = okResp.header("Content-Type") ?: ctJson
-                    return ProxyResult(okResp.code, ct, bytes)
-                }
-
-                val resp = tryForwardAndReturn(upper, path, headers, reqBody)
-                val bytes = resp.body?.bytes() ?: ByteArray(0)
-                val contentType = resp.header("Content-Type") ?: ctJson
-
-                // Cacheamos JSON
-                if (contentType.contains("json", true)) {
-                    withContext(Dispatchers.IO) {
-                        db.cachedDao().upsert(
-                            CachedResponse(
-                                key = key,
-                                path = path,
-                                method = upper,
-                                bodyHash = key,
-                                contentType = contentType,
-                                bytes = bytes
-                            )
-                        )
-                    }
-                }
-
-                // Overlay de stock en GET JSON
-                if (upper == "GET" && contentType.contains("json", true) && isStockListEndpoint(path)) {
-                    val overlay = overlayStockWithLocalDelta(bytes, path)
-                    return ProxyResult(resp.code, contentType, overlay)
-                }
-
-                ProxyResult(resp.code, contentType, bytes)
-            } catch (t: Throwable) {
-                Logger.e("Proxy ONLINE ERROR path=$path", t)
-                val cached = withContext(Dispatchers.IO) { db.cachedDao().byKey(key) }
-                if (cached != null) {
-                    val bytes = if (isStockListEndpoint(path) && cached.contentType.contains("json", true))
-                        overlayStockWithLocalDelta(cached.bytes, path) else cached.bytes
-                    return ProxyResult(200, cached.contentType, bytes)
-                }
-                return if (isCriticalOrderEndpoint(path)) successCritical(path)
-                else ProxyResult(200, ctJson, """{"note":"proxy-error"}""".toByteArray())
-            }
+            handleOnlineRequest(path, upper, headers, body, key, ctJson)
         } else {
-            // OFFLINE
-            if (upper == "POST" && isReplenishPost(path)) {
-                applyReplenishmentLocally(path, body ?: ByteArray(0))
-                return ProxyResult(200, ctJson, """{"code":200,"success":true}""".toByteArray())
+            handleOfflineRequest(path, upper, headers, body, key, ctJson)
+        }
+    }
+
+    // ==================== MODO ONLINE ====================
+    private suspend fun handleOnlineRequest(
+        path: String,
+        method: String,
+        headers: Headers,
+        body: ByteArray?,
+        key: String,
+        ctJson: String
+    ): ProxyResult {
+        try {
+            val allowsBody = method in listOf("POST", "PUT", "PATCH", "DELETE")
+            val reqBody: RequestBody? =
+                if (allowsBody) (body ?: ByteArray(0)).toRequestBody(null) else null
+
+            // 1. MANEJO DE RELLENOS (REPLENISHMENT)
+            if (method == "POST" && isReplenishPost(path)) {
+                val okResp = tryForwardAndReturn(method, path, headers, reqBody)
+                if (okResp.code in 200..299) {
+                    applyReplenishmentLocally(path, body ?: ByteArray(0))
+                }
+                val bytes = okResp.body?.bytes() ?: """{"success":true}""".toByteArray()
+                val ct = okResp.header("Content-Type") ?: ctJson
+                return ProxyResult(okResp.code, ct, bytes)
             }
+
+            // 2. MANEJO DE ÓRDENES/COMPRAS
+            if (method == "POST" && isCriticalOrderEndpoint(path)) {
+                val okResp = tryForwardAndReturn(method, path, headers, reqBody)
+
+                if (okResp.code in 200..299) {
+                    applyOrderStockDecrementLocally(path, body ?: ByteArray(0))
+                }
+
+                val bytes = okResp.body?.bytes() ?: """{"success":true}""".toByteArray()
+                val ct = okResp.header("Content-Type") ?: ctJson
+                return ProxyResult(okResp.code, ct, bytes)
+            }
+
+            // 3. PETICIÓN NORMAL
+            val resp = tryForwardAndReturn(method, path, headers, reqBody)
+            val bytes = resp.body?.bytes() ?: ByteArray(0)
+            val contentType = resp.header("Content-Type") ?: ctJson
+
+            if (contentType.contains("json", true)) {
+                withContext(Dispatchers.IO) {
+                    db.cachedDao().upsert(
+                        CachedResponse(
+                            key = key,
+                            path = path,
+                            method = method,
+                            bodyHash = key,
+                            contentType = contentType,
+                            bytes = bytes
+                        )
+                    )
+                }
+
+                if (method == "GET" && isStockListEndpoint(path)) {
+                    updateServerStockQuantities(bytes)
+                }
+            }
+
+            if (method == "GET" && contentType.contains("json", true) && isStockListEndpoint(path)) {
+                val overlay = overlayStockWithLocalDelta(bytes, path)
+                return ProxyResult(resp.code, contentType, overlay)
+            }
+
+            ProxyResult(resp.code, contentType, bytes)
+
+        } catch (t: Throwable) {
+            Logger.e("Proxy ONLINE ERROR path=$path", t)
 
             val cached = withContext(Dispatchers.IO) { db.cachedDao().byKey(key) }
             if (cached != null) {
@@ -143,23 +156,63 @@ class ProxyHandler(private val ctx: Context) {
                 return ProxyResult(200, cached.contentType, bytes)
             }
 
-            if (isCriticalOrderEndpoint(path)) {
-                enqueuePending(path, upper, headers, body)
-                return successCritical(path)
+            return if (isCriticalOrderEndpoint(path)) {
+                enqueuePending(path, method, headers, body)
+                applyOrderStockDecrementLocally(path, body ?: ByteArray(0))
+                successCritical(path)
+            } else {
+                ProxyResult(200, ctJson, """{"note":"proxy-error"}""".toByteArray())
             }
-
-            return ProxyResult(200, ctJson, """{"note":"offline-cached-miss"}""".toByteArray())
         }
     }
 
-    private fun tryForwardAndReturn(method: String, path: String, headers: Headers, reqBody: RequestBody?) =
-        ok.newCall(
-            Request.Builder()
-                .url("$REAL_BASE/" + path.trimStart('/'))
-                .method(method, reqBody)
-                .headers(headers)
-                .build()
-        ).execute()
+    // ==================== MODO OFFLINE ====================
+    private suspend fun handleOfflineRequest(
+        path: String,
+        method: String,
+        headers: Headers,
+        body: ByteArray?,
+        key: String,
+        ctJson: String
+    ): ProxyResult {
+        Logger.d("OFFLINE MODE: path=$path method=$method")
+
+        if (method == "POST" && isReplenishPost(path)) {
+            applyReplenishmentLocally(path, body ?: ByteArray(0))
+            enqueuePending(path, method, headers, body)
+            return ProxyResult(200, ctJson, """{"code":200,"success":true}""".toByteArray())
+        }
+
+        if (method == "POST" && isCriticalOrderEndpoint(path)) {
+            applyOrderStockDecrementLocally(path, body ?: ByteArray(0))
+            enqueuePending(path, method, headers, body)
+            return successCritical(path)
+        }
+
+        val cached = withContext(Dispatchers.IO) { db.cachedDao().byKey(key) }
+        if (cached != null) {
+            val bytes = if (isStockListEndpoint(path) && cached.contentType.contains("json", true))
+                overlayStockWithLocalDelta(cached.bytes, path) else cached.bytes
+            return ProxyResult(200, cached.contentType, bytes)
+        }
+
+        return ProxyResult(200, ctJson, """{"note":"offline-cached-miss"}""".toByteArray())
+    }
+
+    // ==================== FUNCIONES AUXILIARES ====================
+
+    private fun tryForwardAndReturn(
+        method: String,
+        path: String,
+        headers: Headers,
+        reqBody: RequestBody?
+    ) = ok.newCall(
+        Request.Builder()
+            .url("$REAL_BASE/" + path.trimStart('/'))
+            .method(method, reqBody)
+            .headers(headers)
+            .build()
+    ).execute()
 
     private suspend fun enqueuePending(
         path: String,
@@ -168,13 +221,22 @@ class ProxyHandler(private val ctx: Context) {
         body: ByteArray?
     ) {
         withContext(Dispatchers.IO) {
-            // Guarda un subconjunto útil de cabeceras
             val keep = listOf("Authorization", "Content-Type", "X-Device-Id", "X-Session-Id")
             val hdrMap = mutableMapOf<String, String>()
             for (k in keep) {
                 headers[k]?.let { v -> hdrMap[k] = v }
             }
             val headersJson = try { mapper.writeValueAsString(hdrMap) } catch (_: Throwable) { "{}" }
+
+            var clientOrderId: String? = null
+            if (body != null && isCriticalOrderEndpoint(path)) {
+                try {
+                    val node = mapper.readTree(body)
+                    clientOrderId = node.get("orderId")?.asText()
+                        ?: node.get("orderNo")?.asText()
+                                ?: "LOCAL-${UUID.randomUUID()}"
+                } catch (_: Throwable) { }
+            }
 
             db.pendingDao().insert(
                 PendingRequest(
@@ -183,10 +245,48 @@ class ProxyHandler(private val ctx: Context) {
                     method = method,
                     headersJson = headersJson,
                     body = body ?: ByteArray(0),
-                    clientOrderId = null,
+                    clientOrderId = clientOrderId,
                     createdAt = System.currentTimeMillis()
                 )
             )
+            Logger.d("ENQUEUED pending request: path=$path orderId=$clientOrderId")
+        }
+    }
+
+    private suspend fun updateServerStockQuantities(responseBytes: ByteArray) {
+        try {
+            val root = mapper.readTree(responseBytes)
+
+            fun processNode(node: JsonNode) {
+                val id = when {
+                    node.has("productId") -> node.get("productId").asText()
+                    node.has("id") -> node.get("id").asText()
+                    else -> null
+                } ?: return
+
+                val qtyField = listOf("qty", "quantity", "stockNum", "materialNum", "stock", "remainNum")
+                    .firstOrNull { node.has(it) } ?: return
+
+                val serverQty = node.get(qtyField).asInt(0)
+
+                withContext(Dispatchers.IO) {
+                    db.stockStateDao().updateServerQty(id, serverQty)
+                }
+            }
+
+            if (root.isArray) {
+                root.forEach { processNode(it) }
+            } else if (root.isObject) {
+                if (root.has("materials") && root.get("materials").isArray) {
+                    root.get("materials").forEach { processNode(it) }
+                } else {
+                    processNode(root)
+                }
+            }
+
+            Logger.d("Updated server stock quantities from response")
+        } catch (t: Throwable) {
+            Logger.e("Error updating server stock quantities", t)
         }
     }
 
@@ -198,11 +298,11 @@ class ProxyHandler(private val ctx: Context) {
             fun applyOnNode(node: JsonNode) {
                 val id = when {
                     node.has("productId") -> node.get("productId").asText()
-                    node.has("id")        -> node.get("id").asText()
+                    node.has("id") -> node.get("id").asText()
                     else -> null
                 } ?: return
 
-                val qtyField = listOf("qty","quantity","stockNum","materialNum","stock","remainNum")
+                val qtyField = listOf("qty", "quantity", "stockNum", "materialNum", "stock", "remainNum")
                     .firstOrNull { node.has(it) } ?: return
 
                 val serverQty = node.get(qtyField).asInt(0)
@@ -213,6 +313,9 @@ class ProxyHandler(private val ctx: Context) {
                 if (node is ObjectNode) {
                     node.put(qtyField, effective)
                     node.put("gatewayOverlayTs", now)
+                    if (localDelta != 0) {
+                        node.put("localDelta", localDelta)
+                    }
                 }
             }
 
@@ -240,30 +343,35 @@ class ProxyHandler(private val ctx: Context) {
                 node.has("items") && node.get("items").isArray -> node.get("items")
                 node.has("list") && node.get("list").isArray -> node.get("list")
                 node.has("data") && node.get("data").isArray -> node.get("data")
+                node.isArray -> node
                 else -> null
             } ?: return
 
             val toSave = mutableListOf<ReplenishmentEvent>()
-            arr.forEach { it ->
+
+            arr.forEach { item ->
                 val id = when {
-                    it.has("productId") -> it.get("productId").asText()
-                    it.has("id")        -> it.get("id").asText()
+                    item.has("productId") -> item.get("productId").asText()
+                    item.has("id") -> item.get("id").asText()
+                    item.has("materialId") -> item.get("materialId").asText()
                     else -> null
                 } ?: return@forEach
 
                 val delta = when {
-                    it.has("deltaQty") -> it.get("deltaQty").asInt(0)
-                    it.has("qty")      -> it.get("qty").asInt(0)
-                    it.has("quantity") -> it.get("quantity").asInt(0)
-                    it.has("num")      -> it.get("num").asInt(0)
+                    item.has("deltaQty") -> item.get("deltaQty").asInt(0)
+                    item.has("qty") -> item.get("qty").asInt(0)
+                    item.has("quantity") -> item.get("quantity").asInt(0)
+                    item.has("num") -> item.get("num").asInt(0)
+                    item.has("addNum") -> item.get("addNum").asInt(0)
                     else -> 0
                 }
+
                 if (delta == 0) return@forEach
 
-                // Ajusta estado local
-                db.stockStateDao().ensureAndDelta(id, delta, createdAt)
+                withContext(Dispatchers.IO) {
+                    db.stockStateDao().ensureAndDelta(id, delta, createdAt)
+                }
 
-                // Encola evento para push
                 toSave += ReplenishmentEvent(
                     id = UUID.randomUUID().toString(),
                     productId = id,
@@ -274,18 +382,63 @@ class ProxyHandler(private val ctx: Context) {
             }
 
             if (toSave.isNotEmpty()) {
-                withContext(Dispatchers.IO) { db.replenishmentDao().upsertAll(toSave) }
-                Logger.d("Proxy APPLY REPL locally: items=${toSave.size} path=$path")
+                withContext(Dispatchers.IO) {
+                    db.replenishmentDao().upsertAll(toSave)
+                }
+                Logger.d("✅ REPLENISHMENT APPLIED: ${toSave.size} items, path=$path")
             }
         } catch (t: Throwable) {
             Logger.e("applyReplenishmentLocally parse error path=$path", t)
         }
     }
 
+    private suspend fun applyOrderStockDecrementLocally(path: String, body: ByteArray) {
+        try {
+            val node = mapper.readTree(body)
+            val now = System.currentTimeMillis()
+
+            val products = when {
+                node.has("products") && node.get("products").isArray -> node.get("products")
+                node.has("items") && node.get("items").isArray -> node.get("items")
+                node.has("materials") && node.get("materials").isArray -> node.get("materials")
+                node.has("goodsList") && node.get("goodsList").isArray -> node.get("goodsList")
+                else -> null
+            }
+
+            products?.forEach { item ->
+                val productId = when {
+                    item.has("productId") -> item.get("productId").asText()
+                    item.has("materialId") -> item.get("materialId").asText()
+                    item.has("goodsId") -> item.get("goodsId").asText()
+                    item.has("id") -> item.get("id").asText()
+                    else -> null
+                } ?: return@forEach
+
+                val quantity = when {
+                    item.has("quantity") -> item.get("quantity").asInt(1)
+                    item.has("num") -> item.get("num").asInt(1)
+                    item.has("count") -> item.get("count").asInt(1)
+                    else -> 1
+                }
+
+                val delta = -quantity
+                withContext(Dispatchers.IO) {
+                    db.stockStateDao().ensureAndDelta(productId, delta, now)
+                }
+
+                Logger.d("📉 STOCK DECREASED: productId=$productId, delta=$delta")
+            }
+
+        } catch (t: Throwable) {
+            Logger.e("applyOrderStockDecrementLocally error path=$path", t)
+        }
+    }
+
     private fun successCritical(path: String): ProxyResult {
         val ctJson = "application/json"
         return if (path.contains("genOrder")) {
-            val body = """{"code":200,"success":true,"data":{"orderId":"LOCAL-${UUID.randomUUID()}"}}""".toByteArray()
+            val orderId = "LOCAL-${UUID.randomUUID()}"
+            val body = """{"code":200,"success":true,"data":{"orderId":"$orderId"}}""".toByteArray()
             ProxyResult(200, ctJson, body)
         } else {
             val body = """{"code":200,"success":true,"data":true}""".toByteArray()
