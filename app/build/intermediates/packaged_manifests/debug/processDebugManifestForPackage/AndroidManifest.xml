@@ -11,9 +11,9 @@
     <!-- Permisos -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- para solicitar exención de batería -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -24,15 +24,17 @@
     <uses-permission android:name="cl.powerbox.gateway.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
+        android:name="cl.powerbox.gateway.GatewayApplication"
         android:allowBackup="true"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="true"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar" >
+        android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+        android:usesCleartextTraffic="true" >
 
-        <!-- Provider de arranque temprano -->
+        <!-- Provider de arranque temprano (TU VERSIÓN) -->
         <provider
             android:name="cl.powerbox.gateway.startup.StartupProvider"
             android:authorities="cl.powerbox.gateway.startup"
@@ -40,42 +42,7 @@
             android:exported="false"
             android:initOrder="100" />
 
-        <!-- Servicio en primer plano -->
-        <service
-            android:name="cl.powerbox.gateway.service.GatewayForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice" />
-
-        <!-- Arranque en boot (temprano + fallback fabricantes) -->
-        <receiver
-            android:name="cl.powerbox.gateway.service.BootCompletedReceiver"
-            android:directBootAware="true"
-            android:enabled="true"
-            android:exported="true" >
-            <intent-filter>
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
-            </intent-filter>
-        </receiver>
-
-        <activity
-            android:name="cl.powerbox.gateway.ui.MainActivity"
-            android:exported="true" >
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <service
-            android:name="androidx.room.MultiInstanceInvalidationService"
-            android:directBootAware="true"
-            android:exported="false" />
-
+        <!-- WorkManager provider (NECESARIO PARA SINCRONIZACIÓN) -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="cl.powerbox.gateway.androidx-startup"
@@ -94,6 +61,42 @@
                 android:value="androidx.startup" />
         </provider>
 
+        <!-- Servicio en primer plano (TU VERSIÓN) -->
+        <service
+            android:name="cl.powerbox.gateway.service.GatewayForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|connectedDevice" />
+
+        <!-- Arranque en boot (TU VERSIÓN) -->
+        <receiver
+            android:name="cl.powerbox.gateway.service.BootCompletedReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Activity principal (TU VERSIÓN) -->
+        <activity
+            android:name="cl.powerbox.gateway.ui.MainActivity"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="androidx.room.MultiInstanceInvalidationService"
+            android:directBootAware="true"
+            android:exported="false" />
         <service
             android:name="androidx.work.impl.background.systemalarm.SystemAlarmService"
             android:directBootAware="false"

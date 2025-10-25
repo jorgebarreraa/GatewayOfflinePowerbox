@@ -11,10 +11,10 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import cl.powerbox.gateway.http.HttpServer
+import cl.powerbox.gateway.sync.SyncScheduler
 import cl.powerbox.gateway.util.Logger
 import cl.powerbox.gateway.util.NetWatcher
 import cl.powerbox.gateway.worker.CleanupWorker
-import cl.powerbox.gateway.worker.SyncWorker
 
 class GatewayForegroundService : Service() {
 
@@ -96,29 +96,24 @@ class GatewayForegroundService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(NOTIF_ID, buildNotification("Servidor activo en 127.0.0.1:9090"))
 
-            // Programación
-            SyncWorker.schedule(applicationContext)           // 15 min
-            SyncWorker.scheduleEvery5Min(applicationContext)  // ticker 5 min
+            SyncScheduler.schedulePeriodicSync(applicationContext)
             CleanupWorker.schedule(applicationContext)
 
-            // Net watcher
             netWatcher = NetWatcher(applicationContext) {
                 Logger.d("NetWatcher: volvió internet → kick Sync")
-                SyncWorker.kick(applicationContext)
+                SyncScheduler.syncNow(applicationContext)
             }.also { it.start() }
 
             Logger.d("Gateway service started OK")
         } catch (t: Throwable) {
             Logger.e("Gateway start failed (retries=$retries): ${t::class.java.simpleName}: ${t.message}", t)
 
-            // Si aún hay reintentos, reintentar en backoff y NO mostrar la notificación de error
             if (retries > 0) {
                 main.postDelayed(
                     { safeStartServerWithRetry(retries - 1, (delayMs * 1.7).toLong().coerceAtMost(10_000)) },
                     delayMs
                 )
             } else {
-                // Sólo mostramos la notificación de error cuando ya no quedan intentos
                 val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 nm.notify(NOTIF_ID, buildNotification("Error iniciando servidor (ver logs)"))
             }

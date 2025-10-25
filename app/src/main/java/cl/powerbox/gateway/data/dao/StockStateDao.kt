@@ -1,47 +1,44 @@
 package cl.powerbox.gateway.data.dao
 
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.Query
-import androidx.room.Transaction
+import androidx.room.*
 import cl.powerbox.gateway.data.entity.StockState
 
 @Dao
 interface StockStateDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun upsert(state: StockState)
-
-    @Query("SELECT * FROM stock_state WHERE productId = :pid")
-    fun byId(pid: String): StockState?
-
-    @Query("UPDATE stock_state SET serverQty = :serverQty, updatedAt = :ts WHERE productId = :pid")
-    fun updateServerQty(pid: String, serverQty: Int, ts: Long)
-
-    @Query("UPDATE stock_state SET localDelta = localDelta + :delta, updatedAt = :ts WHERE productId = :pid")
-    fun applyDelta(pid: String, delta: Int, ts: Long)
-
     @Query("SELECT * FROM stock_state")
     fun all(): List<StockState>
 
-    @Transaction
-    fun ensureAndDelta(pid: String, delta: Int, now: Long) {
-        val row = byId(pid)
-        if (row == null) {
-            upsert(StockState(productId = pid, serverQty = 0, localDelta = delta, updatedAt = now))
-        } else {
-            applyDelta(pid, delta, now)
-        }
-    }
+    @Query("SELECT * FROM stock_state WHERE productId = :id LIMIT 1")
+    fun byId(id: String): StockState?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun upsert(state: StockState)
+
+    @Query("UPDATE stock_state SET serverQty = :qty WHERE productId = :id")
+    fun updateServerQty(id: String, qty: Int)
+
+    @Query("UPDATE stock_state SET localDelta = 0 WHERE productId = :id")
+    fun resetLocalDelta(id: String)
+
+    @Query("DELETE FROM stock_state WHERE productId = :id")
+    fun deleteById(id: String)
 
     @Transaction
-    fun ensureAndSetServer(pid: String, serverQty: Int, now: Long) {
-        val row = byId(pid)
-        if (row == null) {
-            upsert(StockState(productId = pid, serverQty = serverQty, localDelta = 0, updatedAt = now))
+    fun ensureAndDelta(productId: String, delta: Int, timestamp: Long) {
+        val existing = byId(productId)
+        if (existing == null) {
+            upsert(
+                StockState(
+                    productId = productId,
+                    serverQty = 0,
+                    localDelta = delta,
+                    lastSync = timestamp
+                )
+            )
         } else {
-            updateServerQty(pid, serverQty, now)
+            val newDelta = existing.localDelta + delta
+            upsert(existing.copy(localDelta = newDelta, lastSync = timestamp))
         }
     }
 }

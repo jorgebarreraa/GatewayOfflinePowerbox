@@ -5,27 +5,31 @@ import cl.powerbox.gateway.data.entity.CachedResponse
 
 @Dao
 interface CachedResponseDao {
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(e: CachedResponse)
+    fun upsert(e: CachedResponse)  // ✅ SIN suspend para llamadas síncronas
 
     @Query("SELECT * FROM cached_response WHERE key = :key LIMIT 1")
-    suspend fun byKey(key: String): CachedResponse?
+    fun byKey(key: String): CachedResponse?  // ✅ SIN suspend
 
     @Query("UPDATE cached_response SET lastHitAt = :ts WHERE key = :key")
-    suspend fun touch(key: String, ts: Long)
+    fun touch(key: String, ts: Long)
 
-    // TTL: borra por antigüedad
     @Query("DELETE FROM cached_response WHERE cachedAt < :olderThanMs")
-    suspend fun deleteOlderThan(olderThanMs: Long): Int
+    fun deleteOlderThan(olderThanMs: Long): Int
 
-    // Orden por menos usados (LRU)
     @Query("SELECT key FROM cached_response ORDER BY lastHitAt ASC LIMIT :limit")
-    suspend fun lruKeys(limit: Int): List<String>
+    fun lruKeys(limit: Int): List<String>
 
     @Query("DELETE FROM cached_response WHERE key IN (:keys)")
-    suspend fun deleteByKeys(keys: List<String>): Int
+    fun deleteByKeys(keys: List<String>): Int
 
-    // Tamaño total (usamos LENGTH() para contar bytes del BLOB)
     @Query("SELECT IFNULL(SUM(LENGTH(bytes)), 0) FROM cached_response")
-    suspend fun totalBytes(): Long
+    fun totalBytes(): Long
+
+    @Query("DELETE FROM cached_response WHERE key = :key")
+    fun deleteByKey(key: String)
+
+    @Query("SELECT COUNT(*) FROM cached_response")
+    fun count(): Int
 }

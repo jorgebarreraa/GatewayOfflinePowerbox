@@ -144,7 +144,7 @@ class ProxyHandler(private val ctx: Context) {
                 return ProxyResult(resp.code, contentType, overlay)
             }
 
-            ProxyResult(resp.code, contentType, bytes)
+            return ProxyResult(resp.code, contentType, bytes)  // ✅ CORREGIDO: return explícito
 
         } catch (t: Throwable) {
             Logger.e("Proxy ONLINE ERROR path=$path", t)
@@ -257,7 +257,7 @@ class ProxyHandler(private val ctx: Context) {
         try {
             val root = mapper.readTree(responseBytes)
 
-            fun processNode(node: JsonNode) {
+            suspend fun processNode(node: JsonNode) {  // ✅ CORREGIDO: suspend
                 val id = when {
                     node.has("productId") -> node.get("productId").asText()
                     node.has("id") -> node.get("id").asText()

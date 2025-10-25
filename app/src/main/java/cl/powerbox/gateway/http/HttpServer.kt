@@ -5,23 +5,19 @@ import cl.powerbox.gateway.data.AppDatabase
 import cl.powerbox.gateway.util.Logger
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.ktor.http.ContentType
-import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respondBytes
-import io.ktor.server.routing.Route
-import io.ktor.server.routing.get
-import io.ktor.server.routing.route
-import io.ktor.server.routing.routing
-import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.core.isEmpty
-import io.ktor.utils.io.core.readByte
+import io.ktor.server.routing.*
 import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.core.readBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Headers
@@ -36,12 +32,12 @@ class HttpServer(private val ctx: Context) {
         engine = embeddedServer(factory = Netty, host = "127.0.0.1", port = 9090) {
             routing {
 
-                // ===== Debug opcional: estado del stock =====
+                // ====== Debug opcional: estado actual del stock ======
                 get("/__debug/stock") {
                     val list = withContext(Dispatchers.IO) { db.stockStateDao().all() }
                     val out = list.map { s ->
                         mapOf(
-                            "id" to s.productId,              // <- tu entidad usa productId
+                            "id" to s.productId,
                             "serverQty" to s.serverQty,
                             "localDelta" to s.localDelta,
                             "effective" to (s.serverQty + s.localDelta)
@@ -54,63 +50,78 @@ class HttpServer(private val ctx: Context) {
                     )
                 }
 
-                // ======================== Proxy catch-all ========================
+                // ========================== Proxy catch-all ==========================
                 route("/{...}") {
-                    methodProxy(HttpMethod.Get)
-                    methodProxy(HttpMethod.Post)
-                    methodProxy(HttpMethod.Put)
-                    methodProxy(HttpMethod.Delete)
-                    methodProxy(HttpMethod.Patch)
-                    methodProxy(HttpMethod.Head)
-                    methodProxy(HttpMethod.Options)
+                    get {
+                        handleProxyRequest(call, ctx)
+                    }
+
+                    post {
+                        handleProxyRequest(call, ctx)
+                    }
+
+                    put {
+                        handleProxyRequest(call, ctx)
+                    }
+
+                    delete {
+                        handleProxyRequest(call, ctx)
+                    }
+
+                    patch {
+                        handleProxyRequest(call, ctx)
+                    }
+
+                    head {
+                        handleProxyRequest(call, ctx)
+                    }
+
+                    options {
+                        handleProxyRequest(call, ctx)
+                    }
                 }
             }
         }.start(wait = false)
+        Logger.d("HTTP server started on 127.0.0.1:9090")
     }
 
     fun stop() {
-        engine?.stop(gracePeriodMillis = 1000, timeoutMillis = 2000)
+        try {
+            engine?.stop(gracePeriodMillis = 1000, timeoutMillis = 2000)
+        } catch (_: Throwable) { /* ignore */ }
         engine = null
-    }
-
-    // ---- helpers ------------------------------------------------------------
-
-    private fun Route.methodProxy(method: HttpMethod) {
-        // Se invoca para cada verbo
-        io.ktor.server.routing.handle {
-            val path = call.request.path().trimStart('/')
-            val methodStr = method.value
-
-            val bodyBytes = call.receiveChannel().toByteArray()
-
-            val hBuilder = Headers.Builder()
-            call.request.headers.forEach { k, values ->
-                values.forEach { v -> hBuilder.add(k, v) }
-            }
-            val h = hBuilder.build()
-
-            val res = ProxyHandler(ctx).handle(
-                path = path,
-                method = methodStr,
-                headers = h,
-                body = if (bodyBytes.isNotEmpty()) bodyBytes else null
-            )
-
-            call.respondBytes(
-                bytes = res.body,
-                contentType = ContentType.parse(res.contentType),
-                status = HttpStatusCode.fromValue(res.status)
-            )
-        }
+        Logger.d("HTTP server stopped")
     }
 }
 
-/** Lee todo el cuerpo a un ByteArray (Ktor 2.x). */
-private suspend fun ByteReadChannel.toByteArray(): ByteArray {
-    val out = ArrayList<Byte>(1024)
-    while (!isClosedForRead) {
-        val pkt = readRemaining(8192)
-        while (!pkt.isEmpty) out += pkt.readByte()
+// Función suspend standalone para manejar todas las peticiones del proxy
+private suspend fun handleProxyRequest(call: ApplicationCall, ctx: Context) {
+    val path = call.request.path().trimStart('/')
+    val methodStr = call.request.httpMethod.value
+
+    // Body
+    val bodyBytes = call.receiveChannel()
+        .readRemaining()
+        .readBytes()
+
+    // Headers (Ktor -> OkHttp)
+    val hb = Headers.Builder()
+    call.request.headers.forEach { name, values ->
+        values.forEach { value ->
+            hb.add(name, value)
+        }
     }
-    return out.toByteArray()
+
+    val res = ProxyHandler(ctx).handle(
+        path = path,
+        method = methodStr,
+        headers = hb.build(),
+        body = if (bodyBytes.isNotEmpty()) bodyBytes else null
+    )
+
+    call.respondBytes(
+        bytes = res.body,
+        contentType = ContentType.parse(res.contentType),
+        status = HttpStatusCode.fromValue(res.status)
+    )
 }
