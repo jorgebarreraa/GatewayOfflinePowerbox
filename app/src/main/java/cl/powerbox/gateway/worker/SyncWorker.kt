@@ -55,7 +55,7 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
             // 1) Reintento de requests originales
-            val batch = db.pendingDao().nextBatch(25)
+            val batch = db.pendingRequestDao().allPending().take(25)
             for (p in batch) {
                 try {
                     val req = Request.Builder()
@@ -63,54 +63,70 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
                         .method(p.method.uppercase(), p.body.toRequestBody(null))
                         .build()
                     ok.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) db.pendingDao().markDone(p.id)
-                        else db.pendingDao().markAttempt(p.id, "HTTP ${resp.code}")
+                        if (resp.isSuccessful) {
+                            db.pendingRequestDao().deleteById(p.id)
+                        }
                     }
                 } catch (t: Throwable) {
-                    db.pendingDao().markAttempt(p.id, t.message ?: "error")
+                    Logger.e("Error retrying pending request", t)
                 }
             }
 
             // 2) PUSH ventas pendientes
             val sales = db.saleDao().pending()
             if (sales.isNotEmpty()) {
-                val payload = mapper.writeValueAsBytes(sales.map {
+                val payload = mapper.writeValueAsBytes(sales.map { saleEvent ->
                     mapOf(
-                        "idempotencyKey" to (it.clientOrderId ?: it.id),
-                        "productId" to it.productId,
-                        "qty" to it.qty,
-                        "price" to it.price,
-                        "createdAt" to it.createdAt
+                        "idempotencyKey" to (saleEvent.clientOrderId ?: saleEvent.id),
+                        "productId" to saleEvent.productId,
+                        "qty" to saleEvent.qty,
+                        "price" to saleEvent.price,
+                        "createdAt" to saleEvent.createdAt
                     )
                 })
                 if (postJson(Endpoints.SALES_BATCH, payload)) {
-                    // TODO: cuando me confirmes ProductDao/InventoryManager, aquí neutralizamos deltas locales.
-                    // inventory.neutralizeSales(...)
                     db.saleDao().markSent(sales.map { it.id })
                 }
             }
 
             // 3) PUSH replenishments
-            val reps = db.replenishmentDao().pending()
+            val reps = db.replenishmentEventDao().allUnsent()
             if (reps.isNotEmpty()) {
-                val payload = mapper.writeValueAsBytes(reps.map {
+                val payload = mapper.writeValueAsBytes(reps.map { repEvent ->
                     mapOf(
-                        "idempotencyKey" to it.id,
-                        "productId" to it.productId,
-                        "deltaQty" to it.deltaQty,
-                        "createdAt" to it.createdAt
+                        "idempotencyKey" to repEvent.id,
+                        "productId" to repEvent.productId,
+                        "deltaQty" to repEvent.deltaQty,
+                        "createdAt" to repEvent.createdAt
                     )
                 })
                 if (postJson(Endpoints.REPL_BATCH, payload)) {
-                    // Si tienes StockStateDao con ensureAndDelta(pid, delta, now), neutralizamos positivos enviados:
-                    val now = System.currentTimeMillis()
-                    reps.groupBy { it.productId }
-                        .mapValues { entry -> entry.value.sumOf { it.deltaQty } }
-                        .forEach { (pid: String, sum: Int) ->
-                            // Como localDelta tenía +sum, confirmados => restamos +sum para volver a 0
-                            runCatching { db.stockStateDao().ensureAndDelta(pid, -sum, now) }
+                    // ✅ CRÍTICO: Actualizar serverQty y resetear localDelta
+                    val syncedDeltas = reps.groupBy { it.productId }
+                        .mapValues { entry ->
+                            entry.value.sumOf { it.deltaQty }
                         }
-                    db.replenishmentDao().markSent(reps.map { it.id })
+
+                    syncedDeltas.forEach { (pid: String, syncedDelta: Int) ->
+                        runCatching {
+                            val state = db.stockStateDao().byId(pid)
+                            if (state != null) {
+                                // Actualizar serverQty con el valor efectivo
+                                val newServerQty = state.serverQty + syncedDelta
+                                db.stockStateDao().updateServerQty(pid, newServerQty)
+
+                                // Resetear localDelta a 0
+                                db.stockStateDao().resetLocalDelta(pid)
+
+                                Logger.d("✅ Synced product $pid: serverQty = $newServerQty, localDelta = 0")
+                            }
+                        }
+                    }
+
+                    // Marcar como enviados
+                    reps.forEach { event ->
+                        db.replenishmentEventDao().markAsSent(event.id)
+                    }
                 }
             }
 
@@ -141,7 +157,6 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
         ok.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) return null
             val bytes = resp.body?.bytes() ?: return null
-            // Evita ambigüedad de sobrecargas
             return mapper.readTree(bytes.inputStream())
         }
     }
@@ -154,16 +169,15 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
     // ===== Parsers (ajusta a tu JSON real) =====
     private suspend fun saveProducts(node: JsonNode) {
         if (!node.isArray) return
-        val list = node.mapNotNull {
-            val id = it.get("id")?.asText() ?: return@mapNotNull null
-            val name = it.get("name")?.asText() ?: "Unnamed"
-            val price = it.get("price")?.asLong() ?: 0L
+        val list = node.mapNotNull { jsonNode ->
+            val id = jsonNode.get("id")?.asText() ?: return@mapNotNull null
+            val name = jsonNode.get("name")?.asText() ?: "Unnamed"
+            val price = jsonNode.get("price")?.asLong() ?: 0L
 
-            // sin warning por operador Elvis en tipo no-nullable
-            val recipeNode = it.get("recipe") ?: it.get("recipeJson")
+            val recipeNode = jsonNode.get("recipe") ?: jsonNode.get("recipeJson")
             val recipe = recipeNode?.toString()
 
-            val updatedAt = it.get("updatedAt")?.asLong() ?: System.currentTimeMillis()
+            val updatedAt = jsonNode.get("updatedAt")?.asLong() ?: System.currentTimeMillis()
             Product(id, name, price, recipe, updatedAt)
         }
         db.productDao().upsertAll(list)
@@ -174,10 +188,28 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
     private suspend fun saveStockToServerQty(node: JsonNode) {
         if (!node.isArray) return
         val now = System.currentTimeMillis()
-        node.forEach {
-            val pid = it.get("productId")?.asText() ?: it.get("id")?.asText() ?: return@forEach
-            val qty = it.get("qty")?.asInt() ?: it.get("quantity")?.asInt() ?: return@forEach
-            runCatching { db.stockStateDao().ensureAndSetServer(pid, qty, now) }
+        node.forEach { jsonNode ->
+            val pid = jsonNode.get("productId")?.asText() ?: jsonNode.get("id")?.asText() ?: return@forEach
+            val qty = jsonNode.get("qty")?.asInt() ?: jsonNode.get("quantity")?.asInt() ?: return@forEach
+
+            val existing = db.stockStateDao().byId(pid)
+            if (existing == null) {
+                db.stockStateDao().upsert(
+                    StockState(
+                        productId = pid,
+                        serverQty = qty,
+                        localDelta = 0,
+                        lastSync = now
+                    )
+                )
+            } else {
+                db.stockStateDao().upsert(
+                    existing.copy(
+                        serverQty = qty,
+                        lastSync = now
+                    )
+                )
+            }
         }
         Logger.d("SyncWorker: saved server stock snapshot")
     }
@@ -192,10 +224,10 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
                 list += MachineConfig(e.key, e.value.toString(), now)
             }
         } else if (node.isArray) {
-            node.forEach {
-                val key = it.get("key")?.asText() ?: return@forEach
-                val value = it.get("value")?.toString() ?: "\"\""
-                val updatedAt = it.get("updatedAt")?.asLong() ?: System.currentTimeMillis()
+            node.forEach { jsonNode ->
+                val key = jsonNode.get("key")?.asText() ?: return@forEach
+                val value = jsonNode.get("value")?.toString() ?: "\"\""
+                val updatedAt = jsonNode.get("updatedAt")?.asLong() ?: System.currentTimeMillis()
                 list += MachineConfig(key, value, updatedAt)
             }
         }

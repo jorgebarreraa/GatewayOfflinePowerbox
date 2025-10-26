@@ -30,6 +30,8 @@ public final class PendingRequestDao_Impl implements PendingRequestDao {
 
   private final SharedSQLiteStatement __preparedStmtOfDeleteOlderThan;
 
+  private final SharedSQLiteStatement __preparedStmtOfDeleteSynced;
+
   public PendingRequestDao_Impl(@NonNull final RoomDatabase __db) {
     this.__db = __db;
     this.__insertionAdapterOfPendingRequest = new EntityInsertionAdapter<PendingRequest>(__db) {
@@ -91,6 +93,14 @@ public final class PendingRequestDao_Impl implements PendingRequestDao {
         return _query;
       }
     };
+    this.__preparedStmtOfDeleteSynced = new SharedSQLiteStatement(__db) {
+      @Override
+      @NonNull
+      public String createQuery() {
+        final String _query = "DELETE FROM pending_requests";
+        return _query;
+      }
+    };
   }
 
   @Override
@@ -129,7 +139,7 @@ public final class PendingRequestDao_Impl implements PendingRequestDao {
   }
 
   @Override
-  public void deleteOlderThan(final long timestamp) {
+  public int deleteOlderThan(final long timestamp) {
     __db.assertNotSuspendingTransaction();
     final SupportSQLiteStatement _stmt = __preparedStmtOfDeleteOlderThan.acquire();
     int _argIndex = 1;
@@ -137,8 +147,9 @@ public final class PendingRequestDao_Impl implements PendingRequestDao {
     try {
       __db.beginTransaction();
       try {
-        _stmt.executeUpdateDelete();
+        final int _result = _stmt.executeUpdateDelete();
         __db.setTransactionSuccessful();
+        return _result;
       } finally {
         __db.endTransaction();
       }
@@ -148,7 +159,90 @@ public final class PendingRequestDao_Impl implements PendingRequestDao {
   }
 
   @Override
+  public int deleteSynced() {
+    __db.assertNotSuspendingTransaction();
+    final SupportSQLiteStatement _stmt = __preparedStmtOfDeleteSynced.acquire();
+    try {
+      __db.beginTransaction();
+      try {
+        final int _result = _stmt.executeUpdateDelete();
+        __db.setTransactionSuccessful();
+        return _result;
+      } finally {
+        __db.endTransaction();
+      }
+    } finally {
+      __preparedStmtOfDeleteSynced.release(_stmt);
+    }
+  }
+
+  @Override
   public List<PendingRequest> allPending() {
+    final String _sql = "SELECT * FROM pending_requests ORDER BY createdAt ASC";
+    final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 0);
+    __db.assertNotSuspendingTransaction();
+    final Cursor _cursor = DBUtil.query(__db, _statement, false, null);
+    try {
+      final int _cursorIndexOfId = CursorUtil.getColumnIndexOrThrow(_cursor, "id");
+      final int _cursorIndexOfPath = CursorUtil.getColumnIndexOrThrow(_cursor, "path");
+      final int _cursorIndexOfMethod = CursorUtil.getColumnIndexOrThrow(_cursor, "method");
+      final int _cursorIndexOfHeadersJson = CursorUtil.getColumnIndexOrThrow(_cursor, "headersJson");
+      final int _cursorIndexOfBody = CursorUtil.getColumnIndexOrThrow(_cursor, "body");
+      final int _cursorIndexOfClientOrderId = CursorUtil.getColumnIndexOrThrow(_cursor, "clientOrderId");
+      final int _cursorIndexOfCreatedAt = CursorUtil.getColumnIndexOrThrow(_cursor, "createdAt");
+      final List<PendingRequest> _result = new ArrayList<PendingRequest>(_cursor.getCount());
+      while (_cursor.moveToNext()) {
+        final PendingRequest _item;
+        final String _tmpId;
+        if (_cursor.isNull(_cursorIndexOfId)) {
+          _tmpId = null;
+        } else {
+          _tmpId = _cursor.getString(_cursorIndexOfId);
+        }
+        final String _tmpPath;
+        if (_cursor.isNull(_cursorIndexOfPath)) {
+          _tmpPath = null;
+        } else {
+          _tmpPath = _cursor.getString(_cursorIndexOfPath);
+        }
+        final String _tmpMethod;
+        if (_cursor.isNull(_cursorIndexOfMethod)) {
+          _tmpMethod = null;
+        } else {
+          _tmpMethod = _cursor.getString(_cursorIndexOfMethod);
+        }
+        final String _tmpHeadersJson;
+        if (_cursor.isNull(_cursorIndexOfHeadersJson)) {
+          _tmpHeadersJson = null;
+        } else {
+          _tmpHeadersJson = _cursor.getString(_cursorIndexOfHeadersJson);
+        }
+        final byte[] _tmpBody;
+        if (_cursor.isNull(_cursorIndexOfBody)) {
+          _tmpBody = null;
+        } else {
+          _tmpBody = _cursor.getBlob(_cursorIndexOfBody);
+        }
+        final String _tmpClientOrderId;
+        if (_cursor.isNull(_cursorIndexOfClientOrderId)) {
+          _tmpClientOrderId = null;
+        } else {
+          _tmpClientOrderId = _cursor.getString(_cursorIndexOfClientOrderId);
+        }
+        final long _tmpCreatedAt;
+        _tmpCreatedAt = _cursor.getLong(_cursorIndexOfCreatedAt);
+        _item = new PendingRequest(_tmpId,_tmpPath,_tmpMethod,_tmpHeadersJson,_tmpBody,_tmpClientOrderId,_tmpCreatedAt);
+        _result.add(_item);
+      }
+      return _result;
+    } finally {
+      _cursor.close();
+      _statement.release();
+    }
+  }
+
+  @Override
+  public List<PendingRequest> getAll() {
     final String _sql = "SELECT * FROM pending_requests ORDER BY createdAt ASC";
     final RoomSQLiteQuery _statement = RoomSQLiteQuery.acquire(_sql, 0);
     __db.assertNotSuspendingTransaction();

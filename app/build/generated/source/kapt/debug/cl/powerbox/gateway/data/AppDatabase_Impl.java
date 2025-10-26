@@ -393,7 +393,7 @@ public final class AppDatabase_Impl extends AppDatabase {
   }
 
   @Override
-  public ReplenishmentEventDao replenishmentDao() {
+  public ReplenishmentEventDao replenishmentEventDao() {
     if (_replenishmentEventDao != null) {
       return _replenishmentEventDao;
     } else {

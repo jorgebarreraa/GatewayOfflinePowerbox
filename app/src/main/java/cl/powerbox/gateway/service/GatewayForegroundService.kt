@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
-import cl.powerbox.gateway.http.HttpServer
 import cl.powerbox.gateway.sync.SyncScheduler
 import cl.powerbox.gateway.util.Logger
 import cl.powerbox.gateway.util.NetWatcher
@@ -56,79 +55,66 @@ class GatewayForegroundService : Service() {
         }
     }
 
-    private var server: HttpServer? = null
     private var netWatcher: NetWatcher? = null
     private val main = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
         val dp = applicationContext.createDeviceProtectedStorageContext()
-        cl.powerbox.gateway.util.Logger.init(dp)
+        Logger.init(dp)
         createChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIF_ID, buildNotification("Levantando servidor..."))
+        startForeground(NOTIF_ID, buildNotification("Gateway Activo"))
 
-        if (server == null) {
-            safeStartServerWithRetry()
-        } else {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(NOTIF_ID, buildNotification("Servidor activo en 127.0.0.1:9090"))
+        // El servidor HTTP ya se inició en GatewayApplication
+        // Este servicio solo mantiene el proceso vivo y gestiona workers
+
+        if (netWatcher == null) {
+            initializeServices()
         }
 
         return START_STICKY
     }
 
-    private fun safeStartServerWithRetry(retries: Int = 5, delayMs: Long = 1500L) {
+    private fun initializeServices() {
         try {
-            if (server != null) {
-                Logger.d("Gateway: server ya estaba activo, refrescando notificación")
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.notify(NOTIF_ID, buildNotification("Servidor activo en 127.0.0.1:9090"))
-                return
-            }
-
-            Logger.d("Gateway: intentando iniciar HttpServer (retries=$retries)")
-            server = HttpServer(applicationContext).also { it.start() }
             setRunning(this, true)
 
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(NOTIF_ID, buildNotification("Servidor activo en 127.0.0.1:9090"))
-
+            // Programar sincronización periódica
             SyncScheduler.schedulePeriodicSync(applicationContext)
+
+            // Programar limpieza
             CleanupWorker.schedule(applicationContext)
 
+            // Iniciar NetWatcher para detectar cuando vuelva internet
             netWatcher = NetWatcher(applicationContext) {
                 Logger.d("NetWatcher: volvió internet → kick Sync")
                 SyncScheduler.syncNow(applicationContext)
             }.also { it.start() }
 
-            Logger.d("Gateway service started OK")
-        } catch (t: Throwable) {
-            Logger.e("Gateway start failed (retries=$retries): ${t::class.java.simpleName}: ${t.message}", t)
+            Logger.d("✅ Gateway service initialized (HTTP server already running from Application)")
 
-            if (retries > 0) {
-                main.postDelayed(
-                    { safeStartServerWithRetry(retries - 1, (delayMs * 1.7).toLong().coerceAtMost(10_000)) },
-                    delayMs
-                )
-            } else {
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.notify(NOTIF_ID, buildNotification("Error iniciando servidor (ver logs)"))
-            }
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIF_ID, buildNotification("Servidor activo en 127.0.0.1:9090"))
+
+        } catch (t: Throwable) {
+            Logger.e("Gateway service initialization failed", t)
+
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIF_ID, buildNotification("Error iniciando servicios (ver logs)"))
         }
     }
 
     override fun onDestroy() {
-        try { server?.stop() } catch (_: Throwable) {}
-        server = null
-
         try { netWatcher?.stop() } catch (_: Throwable) {}
         netWatcher = null
 
         setRunning(this, false)
         super.onDestroy()
+
+        Logger.d("GatewayForegroundService destroyed")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

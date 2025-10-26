@@ -1,56 +1,58 @@
 package cl.powerbox.gateway
 
 import android.app.Application
+import androidx.work.Configuration
+import androidx.work.WorkManager
 import cl.powerbox.gateway.http.HttpServer
 import cl.powerbox.gateway.sync.SyncScheduler
 import cl.powerbox.gateway.util.Logger
 import cl.powerbox.gateway.util.NetworkMonitor
+import cl.powerbox.gateway.worker.CleanupWorker
 
 class GatewayApplication : Application() {
-
-    private var httpServer: HttpServer? = null
-    private var networkMonitor: NetworkMonitor? = null
 
     override fun onCreate() {
         super.onCreate()
 
         Logger.d("🚀 GatewayApplication starting...")
 
-        startHttpServer()
-        SyncScheduler.schedulePeriodicSync(this)
-        startNetworkMonitoring()
-
-        Logger.d("✅ GatewayApplication initialized successfully")
-    }
-
-    private fun startHttpServer() {
         try {
-            httpServer = HttpServer(this)
-            httpServer?.start()
-            Logger.d("✅ HTTP Server started on 127.0.0.1:9090")
+            // 1. Inicializar WorkManager PRIMERO
+            initializeWorkManager()
+
+            // 2. Iniciar NetworkMonitor
+            NetworkMonitor.get(this).startMonitoring()
+
+            // 3. Iniciar HTTP Server
+            HttpServer(this).start()
+
+            // 4. Programar sincronización periódica
+            SyncScheduler.schedulePeriodicSync(this)
+
+            // 5. Programar limpieza periódica
+            CleanupWorker.schedule(this)
+
+            Logger.d("✅ GatewayApplication initialized successfully")
         } catch (e: Exception) {
-            Logger.e("❌ Failed to start HTTP server", e)
+            Logger.e("❌ Error initializing GatewayApplication", e)
         }
     }
 
-    private fun startNetworkMonitoring() {
+    /**
+     * Inicializa WorkManager manualmente
+     */
+    private fun initializeWorkManager() {
         try {
-            networkMonitor = NetworkMonitor(this)
-            networkMonitor?.startMonitoring()
-            Logger.d("✅ Network monitoring started")
+            if (!WorkManager.isInitialized()) {
+                val config = Configuration.Builder()
+                    .setMinimumLoggingLevel(android.util.Log.DEBUG)
+                    .build()
+
+                WorkManager.initialize(this, config)
+                Logger.d("✅ WorkManager initialized")
+            }
         } catch (e: Exception) {
-            Logger.e("❌ Failed to start network monitoring", e)
+            Logger.e("Error initializing WorkManager", e)
         }
     }
-
-    override fun onTerminate() {
-        super.onTerminate()
-
-        Logger.d("🛑 GatewayApplication terminating...")
-
-        httpServer?.stop()
-        networkMonitor?.stopMonitoring()
-
-        Logger.d("✅ GatewayApplication terminated")
-    }
-}
+}0ñ

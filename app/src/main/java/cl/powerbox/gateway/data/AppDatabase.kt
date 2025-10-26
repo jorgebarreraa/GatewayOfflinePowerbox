@@ -18,7 +18,7 @@ import cl.powerbox.gateway.data.entity.*
         MachineConfig::class,
         StockState::class
     ],
-    version = 1,  // ⬅️ Version 1 = BD nueva desde cero
+    version = 1,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,9 +28,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun productDao(): ProductDao
     abstract fun stockMasterDao(): StockMasterDao
     abstract fun saleDao(): SaleEventDao
-    abstract fun replenishmentDao(): ReplenishmentEventDao
+    abstract fun replenishmentEventDao(): ReplenishmentEventDao
     abstract fun machineConfigDao(): MachineConfigDao
     abstract fun stockStateDao(): StockStateDao
+
+    // ✅ Alias para consistencia
+    fun pendingRequestDao() = pendingDao()
 
     companion object {
         @Volatile
@@ -41,7 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
                 INSTANCE ?: Room.databaseBuilder(
                     ctx.applicationContext,
                     AppDatabase::class.java,
-                    "gateway_clean.db"  // ⬅️ NUEVO nombre para forzar recreación
+                    "gateway_clean.db"
                 )
                     .fallbackToDestructiveMigration()
                     .build()

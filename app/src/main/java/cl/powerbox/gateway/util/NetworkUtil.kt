@@ -6,17 +6,36 @@ import android.net.NetworkCapabilities
 import android.os.Build
 
 object NetworkUtil {
-    
+
+    /**
+     * ✅ CRÍTICO: Verifica conectividad REAL a internet
+     * Usa NetworkMonitor que hace ping a servidores externos
+     * NO confía solo en NET_CAPABILITY_VALIDATED
+     */
     fun isOnline(context: Context): Boolean {
+        return try {
+            // Usar NetworkMonitor que hace verificaciones REALES
+            NetworkMonitor.isOnline()
+        } catch (e: Exception) {
+            Logger.e("Error checking online status via NetworkMonitor", e)
+            // Fallback: usar método tradicional
+            isOnlineFallback(context)
+        }
+    }
+
+    /**
+     * Método fallback en caso de error con NetworkMonitor
+     */
+    private fun isOnlineFallback(context: Context): Boolean {
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return false
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val network = connectivityManager.activeNetwork ?: return false
             val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-            
+
             return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                   capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         } else {
             @Suppress("DEPRECATION")
             val networkInfo = connectivityManager.activeNetworkInfo

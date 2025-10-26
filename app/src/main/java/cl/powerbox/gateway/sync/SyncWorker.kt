@@ -54,7 +54,7 @@ class SyncWorker(
 
     private suspend fun syncPendingRequests(): Int {
         val pending = withContext(Dispatchers.IO) {
-            db.pendingDao().allPending()
+            db.pendingRequestDao().allPending()
         }
 
         if (pending.isEmpty()) {
@@ -71,11 +71,13 @@ class SyncWorker(
                 val headersMap = try {
                     mapper.readValue(req.headersJson, Map::class.java) as Map<String, String>
                 } catch (_: Throwable) {
-                    emptyMap()
+                    emptyMap<String, String>()
                 }
 
                 val headersBuilder = Headers.Builder()
-                headersMap.forEach { (k, v) -> headersBuilder.add(k, v) }
+                headersMap.forEach { (k: String, v: String) ->
+                    headersBuilder.add(k, v)
+                }
 
                 val requestBody = if (req.body.isNotEmpty()) {
                     req.body.toRequestBody(null)
@@ -91,7 +93,7 @@ class SyncWorker(
 
                 if (response.code in 200..299) {
                     withContext(Dispatchers.IO) {
-                        db.pendingDao().deleteById(req.id)
+                        db.pendingRequestDao().deleteById(req.id)
                     }
                     synced++
                     Logger.d("✅ Synced pending request: ${req.path} (code: ${response.code})")
@@ -111,7 +113,7 @@ class SyncWorker(
 
     private suspend fun syncReplenishmentEvents(): Int {
         val events = withContext(Dispatchers.IO) {
-            db.replenishmentDao().allUnsent()
+            db.replenishmentEventDao().allUnsent()
         }
 
         if (events.isEmpty()) {
@@ -124,7 +126,7 @@ class SyncWorker(
 
         val grouped = events.groupBy { it.productId }
 
-        for ((productId, productEvents) in grouped) {
+        for ((productId: String, productEvents) in grouped) {
             try {
                 val payload = mapOf(
                     "productId" to productId,
@@ -151,7 +153,7 @@ class SyncWorker(
                 if (response.code in 200..299) {
                     withContext(Dispatchers.IO) {
                         productEvents.forEach { event ->
-                            db.replenishmentDao().markAsSent(event.id)
+                            db.replenishmentEventDao().markAsSent(event.id)
                         }
                     }
                     synced += productEvents.size
@@ -172,26 +174,33 @@ class SyncWorker(
 
     private suspend fun cleanupSyncedStockStates() {
         withContext(Dispatchers.IO) {
-            val allSentEvents = db.replenishmentDao().allSent()
+            val allSentEvents = db.replenishmentEventDao().allSent()
 
             if (allSentEvents.isEmpty()) return@withContext
 
+            // ✅ CRÍTICO: Actualizar serverQty y resetear localDelta
             val syncedDeltas = allSentEvents
                 .groupBy { it.productId }
-                .mapValues { (_, events) -> events.sumOf { it.deltaQty } }
+                .mapValues { (_, events) ->
+                    events.sumOf { it.deltaQty }
+                }
 
-            syncedDeltas.forEach { (productId, syncedDelta) ->
+            syncedDeltas.forEach { (productId: String, syncedDelta: Int) ->
                 val state = db.stockStateDao().byId(productId)
                 if (state != null) {
-                    if (state.localDelta == syncedDelta) {
-                        db.stockStateDao().resetLocalDelta(productId)
-                        Logger.d("Reset local delta for product: $productId")
-                    }
+                    // ✅ NUEVO ENFOQUE: Actualizar serverQty con el valor efectivo
+                    val newServerQty = state.serverQty + syncedDelta
+                    db.stockStateDao().updateServerQty(productId, newServerQty)
+
+                    // ✅ Resetear localDelta a 0 porque ya se sincronizó
+                    db.stockStateDao().resetLocalDelta(productId)
+
+                    Logger.d("✅ Synced product $productId: serverQty = $newServerQty, localDelta = 0")
                 }
             }
 
             val weekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000)
-            db.replenishmentDao().deleteOldSent(weekAgo)
+            db.replenishmentEventDao().deleteOldSent(weekAgo)
         }
     }
 }
