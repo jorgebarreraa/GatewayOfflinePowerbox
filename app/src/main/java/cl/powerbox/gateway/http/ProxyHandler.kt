@@ -22,6 +22,14 @@ import java.util.UUID
 
 data class ProxyResult(val status: Int, val contentType: String, val body: ByteArray)
 
+/**
+ * ✅ VERSIÓN CORREGIDA - FIX DUPLICACIÓN DE STOCK
+ *
+ * CAMBIOS PRINCIPALES:
+ * 1. NO sobrescribe serverQty cuando hay localDelta pendiente
+ * 2. Reescribe caches INMEDIATAMENTE después de operaciones
+ * 3. Aplica valores efectivos consistentemente
+ */
 class ProxyHandler(private val ctx: Context) {
     private val db = AppDatabase.get(ctx)
     private val ok = OkHttpClient()
@@ -125,9 +133,9 @@ class ProxyHandler(private val ctx: Context) {
             val contentType = resp.header("Content-Type") ?: ctJson
 
             if (contentType.contains("json", true)) {
-                // ✅ MEJORADO: Guardar respuesta original del servidor
+                // ✅ MEJORADO: Guardar respuesta original + actualizar serverQty SOLO si no hay deltas
                 if (method == "GET" && isStockListEndpoint(path)) {
-                    updateServerStockQuantities(bytes)
+                    updateServerStockQuantitiesCarefully(bytes)
                 }
 
                 // Guardar en cache con valores efectivos
@@ -262,7 +270,11 @@ class ProxyHandler(private val ctx: Context) {
         }
     }
 
-    private suspend fun updateServerStockQuantities(responseBytes: ByteArray) {
+    /**
+     * ✅ VERSIÓN MEJORADA: Solo actualiza serverQty si NO hay localDelta pendiente
+     * Esto evita sobrescribir cambios locales que aún no se han sincronizado
+     */
+    private suspend fun updateServerStockQuantitiesCarefully(responseBytes: ByteArray) {
         try {
             val root = mapper.readTree(responseBytes)
 
@@ -291,9 +303,15 @@ class ProxyHandler(private val ctx: Context) {
                                 lastSync = System.currentTimeMillis()
                             )
                         )
+                        Logger.d("📊 NEW stock from server: $id = $serverQty")
                     } else {
-                        // Solo actualizar serverQty, mantener localDelta
-                        db.stockStateDao().updateServerQty(id, serverQty)
+                        // ✅ CRÍTICO: SOLO actualizar serverQty si NO hay localDelta pendiente
+                        if (existing.localDelta == 0) {
+                            db.stockStateDao().updateServerQty(id, serverQty)
+                            Logger.d("📊 UPDATED serverQty: $id = $serverQty (no pending deltas)")
+                        } else {
+                            Logger.d("⚠️ SKIPPED serverQty update for $id (has pending delta: ${existing.localDelta})")
+                        }
                     }
                 }
             }
@@ -315,7 +333,7 @@ class ProxyHandler(private val ctx: Context) {
                 }
             }
 
-            Logger.d("✅ Updated server stock quantities from response")
+            Logger.d("✅ Updated server stock quantities (carefully)")
         } catch (t: Throwable) {
             Logger.e("Error updating server stock quantities", t)
         }

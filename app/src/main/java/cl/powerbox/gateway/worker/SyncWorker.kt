@@ -20,6 +20,15 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
+/**
+ * ✅ VERSIÓN CORREGIDA - NO DUPLICA STOCK
+ *
+ * FIX PRINCIPAL: Después de sincronizar replenishments:
+ * 1. NO actualiza serverQty automáticamente
+ * 2. Marca eventos como sent PRIMERO
+ * 3. LUEGO hace PULL del stock real del servidor
+ * 4. Reescribe caches con valores efectivos
+ */
 class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
 
     object Endpoints {
@@ -54,8 +63,11 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
+            Logger.d("🔄 SyncWorker: Iniciando sincronización...")
+
             // 1) Reintento de requests originales
             val batch = db.pendingRequestDao().allPending().take(25)
+            var syncedPending = 0
             for (p in batch) {
                 try {
                     val req = Request.Builder()
@@ -65,6 +77,8 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
                     ok.newCall(req).execute().use { resp ->
                         if (resp.isSuccessful) {
                             db.pendingRequestDao().deleteById(p.id)
+                            syncedPending++
+                            Logger.d("✅ Pending request synced: ${p.path}")
                         }
                     }
                 } catch (t: Throwable) {
@@ -86,11 +100,13 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
                 })
                 if (postJson(Endpoints.SALES_BATCH, payload)) {
                     db.saleDao().markSent(sales.map { it.id })
+                    Logger.d("✅ Synced ${sales.size} sales")
                 }
             }
 
-            // 3) PUSH replenishments
+            // 3) ✅ PUSH replenishments - VERSIÓN CORREGIDA
             val reps = db.replenishmentEventDao().allUnsent()
+            var syncedReps = 0
             if (reps.isNotEmpty()) {
                 val payload = mapper.writeValueAsBytes(reps.map { repEvent ->
                     mapOf(
@@ -100,40 +116,36 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
                         "createdAt" to repEvent.createdAt
                     )
                 })
+
                 if (postJson(Endpoints.REPL_BATCH, payload)) {
-                    // ✅ CRÍTICO: Actualizar serverQty y resetear localDelta
-                    val syncedDeltas = reps.groupBy { it.productId }
-                        .mapValues { entry ->
-                            entry.value.sumOf { it.deltaQty }
-                        }
-
-                    syncedDeltas.forEach { (pid: String, syncedDelta: Int) ->
-                        runCatching {
-                            val state = db.stockStateDao().byId(pid)
-                            if (state != null) {
-                                // Actualizar serverQty con el valor efectivo
-                                val newServerQty = state.serverQty + syncedDelta
-                                db.stockStateDao().updateServerQty(pid, newServerQty)
-
-                                // Resetear localDelta a 0
-                                db.stockStateDao().resetLocalDelta(pid)
-
-                                Logger.d("✅ Synced product $pid: serverQty = $newServerQty, localDelta = 0")
-                            }
-                        }
-                    }
-
-                    // Marcar como enviados
+                    // ✅ CRÍTICO: SOLO marcar como enviados
+                    // NO actualizar serverQty aquí porque puede causar duplicación
                     reps.forEach { event ->
                         db.replenishmentEventDao().markAsSent(event.id)
                     }
+                    syncedReps = reps.size
+
+                    Logger.d("✅ Synced $syncedReps replenishment events")
+                    Logger.d("⚠️  Esperando PULL del stock real del servidor...")
                 }
             }
 
-            // 4) PULL maestro
+            // 4) ✅ PULL maestro - ESTO actualiza el serverQty con valores reales
             getJson(Endpoints.PRODUCTS)?.let { saveProducts(it) }
-            getJson(Endpoints.STOCK)?.let { saveStockToServerQty(it) }
+
+            // ✅ CRÍTICO: Hacer PULL del stock DESPUÉS de enviar replenishments
+            // Esto garantiza que serverQty tenga el valor correcto del panel
+            getJson(Endpoints.STOCK)?.let {
+                saveStockToServerQtyAndCleanupDeltas(it, syncedReps > 0)
+            }
+
             getJson(Endpoints.CONFIG)?.let { saveConfig(it) }
+
+            // 5) ✅ Limpiar eventos enviados antiguos (7 días)
+            val weekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000)
+            db.replenishmentEventDao().deleteOldSent(weekAgo)
+
+            Logger.d("✅ SyncWorker: Completado - Pending: $syncedPending, Reps: $syncedReps")
 
             // Ticker 5 min → reencolar
             if (inputData.getBoolean(KEY_TICK, false)) {
@@ -184,34 +196,50 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
         Logger.d("SyncWorker: saved products=${list.size}")
     }
 
-    /** Vuelca snapshot del panel a serverQty; deja intacto localDelta. */
-    private suspend fun saveStockToServerQty(node: JsonNode) {
+    /**
+     * ✅ VERSIÓN CORREGIDA:
+     * - Actualiza serverQty con el valor REAL del panel
+     * - Si había replenishments sincronizados, resetea localDelta a 0
+     * - NO hace cálculos, confía en el valor del servidor
+     */
+    private suspend fun saveStockToServerQtyAndCleanupDeltas(node: JsonNode, hadReplenishments: Boolean) {
         if (!node.isArray) return
         val now = System.currentTimeMillis()
+
         node.forEach { jsonNode ->
             val pid = jsonNode.get("productId")?.asText() ?: jsonNode.get("id")?.asText() ?: return@forEach
-            val qty = jsonNode.get("qty")?.asInt() ?: jsonNode.get("quantity")?.asInt() ?: return@forEach
+            val serverQty = jsonNode.get("qty")?.asInt() ?: jsonNode.get("quantity")?.asInt() ?: return@forEach
 
             val existing = db.stockStateDao().byId(pid)
             if (existing == null) {
+                // Crear nuevo estado con qty del servidor
                 db.stockStateDao().upsert(
                     StockState(
                         productId = pid,
-                        serverQty = qty,
+                        serverQty = serverQty,
                         localDelta = 0,
                         lastSync = now
                     )
                 )
+                Logger.d("📊 NEW stock state: $pid = $serverQty (server)")
             } else {
+                // ✅ CRÍTICO: Actualizar serverQty con valor real del panel
                 db.stockStateDao().upsert(
                     existing.copy(
-                        serverQty = qty,
+                        serverQty = serverQty,
+                        localDelta = if (hadReplenishments) 0 else existing.localDelta,
                         lastSync = now
                     )
                 )
+
+                val deltaInfo = if (hadReplenishments) " (delta reset)" else " (delta preserved: ${existing.localDelta})"
+                Logger.d("📊 UPDATED stock: $pid = $serverQty (server)$deltaInfo")
             }
         }
-        Logger.d("SyncWorker: saved server stock snapshot")
+
+        if (hadReplenishments) {
+            Logger.d("✅ Stock synchronized with server after replenishments")
+        }
     }
 
     private suspend fun saveConfig(node: JsonNode) {
